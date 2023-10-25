@@ -1,5 +1,5 @@
 CC	:= gcc
-CFLAGS	:= -Wall -g -MD -O2 -I ../
+CFLAGS	:= -Wall -g -MD -O0 -I ../ -mincoming-stack-boundary=3
 LDFLAGS := -ldune -lpthread
 MODULE_LIB := /lib/modules/$(shell uname -r)/build
 
@@ -35,7 +35,7 @@ hugepages_mod.ko: hugepages_mod.c
 
 clean:
 	rm -f *.o test *.d $(tests_files)
-	make -C $(MODULE_LIB) M=$(PWD) clean
+#	 make -C $(MODULE_LIB) M=$(PWD) clean
 
 -include *.d
 

@@ -6,6 +6,8 @@
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
 #include <asm/io.h>
 #include <linux/sched/task_stack.h>
+#include <linux/gfp.h>
+#include <asm/fpu/api.h>
 
 #define ASM_VMX_VMCLEAR_RAX		".byte 0x66, 0x0f, 0xc7, 0x30"
 #define ASM_VMX_VMLAUNCH		".byte 0x0f, 0x01, 0xc2"
@@ -199,8 +201,9 @@ static inline void cr4_clear_bits(unsigned long mask)
 static inline void compat_fpu_restore(void)
 {
 	// TODO: fpu_restore
-	// if (!current->thread.fpu.fpregs_active)
-	//     fpu__restore(&current->thread.fpu);
+	fpregs_assert_state_consistent();
+	if (test_thread_flag(TIF_NEED_FPU_LOAD))
+		switch_fpu_return();
 }
 #elif LINUX_VERSION_CODE >= KERNEL_VERSION(4, 1, 0)
 static inline void compat_fpu_restore(void)

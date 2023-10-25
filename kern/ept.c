@@ -399,21 +399,29 @@ static int ept_set_pfnmap_epte(struct vmx_vcpu *vcpu, int make_write,
 	unsigned long pfn;
 	int ret;
 	int cache_control;
-
+	unsigned long vm_flags;
+	unsigned long and_res = 0;
+	unsigned long vm_io_or_pfnmap = 0;
 	down_read(&mm->mmap_sem);
 	vma = find_vma(mm, hva);
 	if (!vma) {
 		up_read(&mm->mmap_sem);
+		printk(KERN_ERR "ept_set_pfnmap_epte: could not find vma for hva %lx\n", hva);
 		return -EFAULT;
 	}
-
+	vm_flags = vma->vm_flags;
+	vm_io_or_pfnmap = VM_IO | VM_PFNMAP;
+	and_res = vm_flags & vm_io_or_pfnmap;
 	if (!(vma->vm_flags & (VM_IO | VM_PFNMAP))) {
 		up_read(&mm->mmap_sem);
+		printk(KERN_ERR "ept_set_pfnmap_epte: %lx !(vma->vm_flags & (VM_IO | VM_PFNMAP)) %lx %lx \n", vm_flags, vm_io_or_pfnmap, and_res);
 		return -EFAULT;
 	}
 
+	printk(KERN_ERR "ept_set_pfnmap_epte: %lx (vma->vm_flags & (VM_IO | VM_PFNMAP)) \n", vm_flags);
 	while ((ret = hva_to_pfn_remapped(vma, hva, make_write, &pfn)) == -EAGAIN)
 		;
+	//ret = follow_pfn(vma, hva, &pfn);
 	if (ret) {
 		up_read(&mm->mmap_sem);
 		return ret;
@@ -470,7 +478,7 @@ static int ept_set_epte(struct vmx_vcpu *vcpu, int make_write,
 	if (ret != 1) {
 		ret = ept_set_pfnmap_epte(vcpu, make_write, gpa, hva);
 		if (ret)
-			printk(KERN_ERR "ept: failed to get user page %lx\n", hva);
+			printk(KERN_ERR "ept: failed to get user page %lx, error %d\n", hva, -ret);
 		return ret;
 	}
 

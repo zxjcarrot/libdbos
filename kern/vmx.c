@@ -705,7 +705,7 @@ void vmx_ept_sync_individual_addr(struct vmx_vcpu *vcpu, gpa_t gpa)
 							 (void *)&args, 1);
 }
 
-#define STACK_DEPTH 12
+#define STACK_DEPTH 20
 
 /**
  * vmx_dump_cpu - prints the CPU state
@@ -1429,8 +1429,8 @@ static int vmx_handle_ept_violation(struct vmx_vcpu *vcpu)
 
 	if (ret) {
 		printk(KERN_ERR "vmx: page fault failure "
-						"GPA: 0x%lx, GVA: 0x%lx\n",
-			   gpa, gva);
+						"GPA: 0x%lx, GVA: 0x%lx exit_qual: %x\n",
+			   gpa, gva, exit_qual);
 		vcpu->ret_code = DUNE_RET_EPT_VIOLATION;
 		vmx_dump_cpu(vcpu);
 	}
@@ -1443,19 +1443,31 @@ static void vmx_handle_syscall(struct vmx_vcpu *vcpu)
 	typedef long (*sys_fn)(struct pt_regs *);
 	sys_fn *tbl;
 	struct pt_regs args;
-
+	__u64 vrsp;
 	__u64 orig_rax;
 	long ret;
 
-	printk(
-		KERN_ERR
-		"vmx: %d: syscall %d(0x%llx,0x%llx,0x%llx,0x%llx,0x%llx,0x%llx) from 0x%llx\n",
-		current->pid, (int)vcpu->regs[VCPU_REGS_RAX], vcpu->regs[VCPU_REGS_RDI],
-		vcpu->regs[VCPU_REGS_RSI], vcpu->regs[VCPU_REGS_RDX],
-		vcpu->regs[VCPU_REGS_R10], vcpu->regs[VCPU_REGS_R8],
-		vcpu->regs[VCPU_REGS_R9], vcpu->regs[VCPU_REGS_RCX]);
+	// printk(
+	// 	KERN_ERR
+	// 	"vmx: %d: syscall %d(0x%llx,0x%llx,0x%llx,0x%llx,0x%llx,0x%llx) from 0x%llx\n",
+	// 	current->pid, (int)vcpu->regs[VCPU_REGS_RAX], vcpu->regs[VCPU_REGS_RDI],
+	// 	vcpu->regs[VCPU_REGS_RSI], vcpu->regs[VCPU_REGS_RDX],
+	// 	vcpu->regs[VCPU_REGS_R10], vcpu->regs[VCPU_REGS_R8],
+	// 	vcpu->regs[VCPU_REGS_R9], vcpu->regs[VCPU_REGS_RCX]);
 
 	if (unlikely(vcpu->regs[VCPU_REGS_RAX] > NUM_SYSCALLS)) {
+		vmx_get_cpu(vcpu);
+		vrsp = vmcs_readl(GUEST_RSP);
+		vmx_put_cpu(vcpu);
+
+		printk(KERN_INFO "vmx: invalid syscall %llx, arg 1 %llx , arg 2 %llx, arg 3 %llx err %llx vm_rsp %llx \n", 
+						  vcpu->regs[VCPU_REGS_RAX], 
+						  vcpu->regs[VCPU_REGS_RDI], 
+						  vcpu->regs[VCPU_REGS_RSI], 
+						  vcpu->regs[VCPU_REGS_RDX],
+						  vcpu->regs[VCPU_REGS_RCX],
+						  vrsp);
+		//vmx_dump_cpu(vcpu);
 		vcpu->regs[VCPU_REGS_RAX] = -EINVAL;
 		return;
 	}
@@ -1468,7 +1480,8 @@ static void vmx_handle_syscall(struct vmx_vcpu *vcpu)
 	}
 
 	orig_rax = vcpu->regs[VCPU_REGS_RAX];
-
+	
+	//printk(KERN_INFO "vmx: orig_rax %llx\n", orig_rax);
 	switch (orig_rax) {
 	case __NR_clone:
 		ret =
@@ -1484,6 +1497,7 @@ static void vmx_handle_syscall(struct vmx_vcpu *vcpu)
 		ret = dune_sys_vfork(vcpu);
 		break;
 	case __NR_exit:
+		//vmx_dump_cpu(vcpu);
 		ret = dune_exit(vcpu->regs[VCPU_REGS_RDI], vcpu);
 		break;
 	case __NR_exit_group:
