@@ -69,7 +69,11 @@ static DEFINE_SPINLOCK(vmx_vpid_lock);
 
 static unsigned long *msr_bitmap;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 13, 0)
+#define NUM_SYSCALLS 547
+#else
 #define NUM_SYSCALLS 312
+#endif
 
 #if LINUX_VERSION_CODE <= KERNEL_VERSION(3, 11, 0)
 typedef void (*sys_call_ptr_t)(void);
@@ -1235,6 +1239,7 @@ static long dune_sys_clone(unsigned long clone_flags, unsigned long newsp,
 	if (!newsp)
 		newsp = regs.sp;
 
+	printk(KERN_INFO "vmx: dune_sys_clone clone_flags %lx newsp %lx parent_tid %lx, child_tid %lx, tls %lx, \n", clone_flags, newsp, (uintptr_t)parent_tid, (uintptr_t)child_tid, tls);
 	return dune_do_fork(clone_flags, newsp, &regs, 0, parent_tid, child_tid,
 						tls);
 }
@@ -1490,6 +1495,9 @@ static void vmx_handle_syscall(struct vmx_vcpu *vcpu)
 						   (void *)vcpu->regs[VCPU_REGS_R10],
 						   vcpu->regs[VCPU_REGS_R8], vcpu);
 		break;
+	case __NR_clone3:
+		ret = -ENOSYS; // reject clone3 calls and expect glibc will retry with clone
+		break;
 	case __NR_fork:
 		ret = dune_sys_fork(vcpu);
 		break;
@@ -1517,7 +1525,7 @@ static void vmx_handle_syscall(struct vmx_vcpu *vcpu)
 		ret = tbl[orig_rax](&args);
 		break;
 	}
-
+	//printk(KERN_INFO "vmx: syscall %llx, ret %ld \n", orig_rax, ret);
 	vcpu->regs[VCPU_REGS_RAX] = ret;
 
 	/* We apply the restart semantics as if no signal handler will be
@@ -1654,7 +1662,7 @@ int vmx_launch(struct dune_config *conf, int64_t *ret_code)
 			break;
 	}
 
-	printk(KERN_ERR "vmx: stopping VCPU (VPID %d)\n", vcpu->vpid);
+	printk(KERN_ERR "vmx: stopping VCPU (VPID %d), done %d, vcpu->shutdown %d, vcpu->ret_code %d\n", vcpu->vpid, done, vcpu->shutdown, vcpu->ret_code);
 
 	*ret_code = vcpu->ret_code;
 

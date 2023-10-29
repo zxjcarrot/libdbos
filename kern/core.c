@@ -46,6 +46,22 @@ static int dune_is_user_mode(void)
 	return 0;
 }
 
+static __attribute__((unused)) void dune_dump_config(struct dune_config *conf)
+{
+	printk(KERN_INFO "dune: --- Begin Config Dump ---\n");
+	printk(KERN_INFO "dune: RET %lld STATUS %lld\n", conf->ret, conf->status);
+	printk(KERN_INFO "dune: RFLAGS 0x%016llx CR3 0x%016llx RIP 0x%016llx\n", conf->rflags, conf->cr3, conf->rip);
+	printk(KERN_INFO "dune: RAX 0x%016llx RCX 0x%016llx\n", conf->rax, conf->rcx);
+	printk(KERN_INFO "dune: RDX 0x%016llx RBX 0x%016llx\n", conf->rdx, conf->rbx);
+	printk(KERN_INFO "dune: RSP 0x%016llx RBP 0x%016llx\n", conf->rsp, conf->rbp);
+	printk(KERN_INFO "dune: RSI 0x%016llx RDI 0x%016llx\n", conf->rsi, conf->rdi);
+	printk(KERN_INFO "dune: R8  0x%016llx R9  0x%016llx\n", conf->r8, conf->r9);
+	printk(KERN_INFO "dune: R10 0x%016llx R11 0x%016llx\n", conf->r10, conf->r11);
+	printk(KERN_INFO "dune: R12 0x%016llx R13 0x%016llx\n", conf->r12, conf->r13);
+	printk(KERN_INFO "dune: R14 0x%016llx R15 0x%016llx\n", conf->r14, conf->r15);
+	printk(KERN_INFO "dune: --- End Config Dump ---\n");
+}
+
 static unsigned long dune_get_guest_ip(void)
 {
 	unsigned long long ip = 0;
@@ -70,13 +86,23 @@ static long dune_dev_ioctl(struct file *filp, unsigned int ioctl,
 {
 	long r = -EINVAL;
 	struct dune_config conf;
+	//struct dune_config conf_old;
+	//struct dune_config conf_old2;
 	struct dune_layout layout;
 
 	switch (ioctl) {
 	case DUNE_ENTER:
+		// r = copy_from_user(&conf_old, (int __user *)arg,
+		// 				   sizeof(struct dune_config));
+		// if (r) {
+		// 	printk(KERN_INFO "copy_from_user 1 failed\n");
+		// 	r = -EIO;
+		// 	goto out;
+		// }
 		r = copy_from_user(&conf, (int __user *)arg,
 						   sizeof(struct dune_config));
 		if (r) {
+			printk(KERN_INFO "copy_from_user 2 failed\n");
 			r = -EIO;
 			goto out;
 		}
@@ -85,11 +111,25 @@ static long dune_dev_ioctl(struct file *filp, unsigned int ioctl,
 		if (r)
 			break;
 
-		r = copy_to_user((void __user *)arg, &conf, sizeof(struct dune_config));
+		// printk(KERN_INFO "&conf (user) = %lx before copy\n", (uintptr_t)arg);
+		// dune_dump_config(&conf_old);
+		r = copy_to_user((int __user *)arg, &conf, sizeof(struct dune_config));
+		// printk(KERN_INFO "&conf (user) = %lx, copy_to_user %lu bytes, r=%ld \n", (uintptr_t)arg, sizeof(struct dune_config), r);
+		// dune_dump_config(&conf);
 		if (r) {
+			printk(KERN_INFO "copy_to_user 1 failed\n");
 			r = -EIO;
 			goto out;
 		}
+
+		// r = copy_from_user(&conf_old2, (int __user *)arg,
+		// 				   sizeof(struct dune_config));
+		// if (r) {
+		// 	printk(KERN_INFO "copy_from_user 3 failed\n");
+		// 	r = -EIO;
+		// 	goto out;
+		// }
+		// dune_dump_config(&conf_old2);
 		break;
 
 	case DUNE_GET_SYSCALL:
@@ -110,10 +150,12 @@ static long dune_dev_ioctl(struct file *filp, unsigned int ioctl,
 		break;
 
 	case DUNE_TRAP_ENABLE:
+		printk(KERN_INFO "DUNE_TRAP_ENABLE\n");
 		r = dune_trap_enable(arg);
 		break;
 
 	case DUNE_TRAP_DISABLE:
+		printk(KERN_INFO "DUNE_TRAP_DISABLE\n");
 		r = dune_trap_disable(arg);
 		break;
 
