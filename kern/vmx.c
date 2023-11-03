@@ -863,28 +863,28 @@ static void vmx_setup_initial_guest_state(struct dune_config *conf)
 	vmcs_write32(VM_ENTRY_INTR_INFO_FIELD, 0); /* 22.2.1 */
 }
 
-static void setup_perf_msrs(struct vmx_vcpu *vcpu)
-{
-	int nr_msrs, i;
-	struct perf_guest_switch_msr *msrs;
-	struct vmx_msr_entry *e;
+// static void setup_perf_msrs(struct vmx_vcpu *vcpu)
+// {
+// 	int nr_msrs, i;
+// 	struct perf_guest_switch_msr *msrs;
+// 	struct vmx_msr_entry *e;
 
-	msrs = perf_guest_get_msrs(&nr_msrs);
+// 	msrs = perf_guest_get_msrs(&nr_msrs);
 
-	vcpu->msr_autoload.nr = nr_msrs;
+// 	vcpu->msr_autoload.nr = nr_msrs;
 
-	vmcs_write32(VM_EXIT_MSR_LOAD_COUNT, vcpu->msr_autoload.nr);
-	vmcs_write32(VM_ENTRY_MSR_LOAD_COUNT, vcpu->msr_autoload.nr);
+// 	vmcs_write32(VM_EXIT_MSR_LOAD_COUNT, vcpu->msr_autoload.nr);
+// 	vmcs_write32(VM_ENTRY_MSR_LOAD_COUNT, vcpu->msr_autoload.nr);
 
-	for (i = 0; i < nr_msrs; i++) {
-		e = &vcpu->msr_autoload.host[i];
-		e->index = msrs[i].msr;
-		e->value = msrs[i].host;
-		e = &vcpu->msr_autoload.guest[i];
-		e->index = msrs[i].msr;
-		e->value = msrs[i].guest;
-	}
-}
+// 	for (i = 0; i < nr_msrs; i++) {
+// 		e = &vcpu->msr_autoload.host[i];
+// 		e->index = msrs[i].msr;
+// 		e->value = msrs[i].host;
+// 		e = &vcpu->msr_autoload.guest[i];
+// 		e->index = msrs[i].msr;
+// 		e->value = msrs[i].guest;
+// 	}
+// }
 
 static void __vmx_disable_intercept_for_msr(unsigned long *msr_bitmap, u32 msr)
 {
@@ -1160,7 +1160,7 @@ void vmx_cleanup(void)
 	struct vmx_vcpu *vcpu, *tmp;
 
 	list_for_each_entry_safe (vcpu, tmp, &vcpus, list) {
-		printk(KERN_ERR "vmx: destroying VCPU (VPID %d)\n", vcpu->vpid);
+		printk(KERN_ERR "vmx: destroying VCPU (VPID %d), exit count %llu\n", vcpu->vpid, vcpu->exit_count);
 		list_del(&vcpu->list);
 		vmx_destroy_vcpu(vcpu);
 	}
@@ -1223,8 +1223,8 @@ static void make_pt_regs(struct vmx_vcpu *vcpu, struct pt_regs *regs, int sysnr)
 	 * Our solution is to adopt a special Dune convention
 	 * where the desired %RIP address is provided in %RCX.
 	 */
-	if (!(__addr_ok(regs->ip)))
-		regs->ip = regs->cx;
+	// if (!(__addr_ok(regs->ip)))
+	regs->ip = regs->cx;
 
 	regs->cs = __USER_CS;
 	regs->ss = __USER_DS;
@@ -1621,7 +1621,7 @@ int vmx_launch(struct dune_config *conf, int64_t *ret_code)
 			break;
 		}
 
-		setup_perf_msrs(vcpu);
+		//setup_perf_msrs(vcpu);
 
 		ret = vmx_run_vcpu(vcpu);
 
@@ -1639,7 +1639,7 @@ int vmx_launch(struct dune_config *conf, int64_t *ret_code)
 		}
 
 		vmx_put_cpu(vcpu);
-
+		vcpu->exit_count++;
 		if (ret == EXIT_REASON_VMCALL)
 			vmx_handle_syscall(vcpu);
 		else if (ret == EXIT_REASON_CPUID)

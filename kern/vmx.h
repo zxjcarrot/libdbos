@@ -67,7 +67,7 @@ struct vmx_vcpu {
 	u64 host_rsp;
 	u64 regs[NR_VCPU_REGS];
 	u64 cr2;
-
+	u64 exit_count;
 	int shutdown;
 	int ret_code;
 

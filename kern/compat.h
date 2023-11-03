@@ -8,7 +8,7 @@
 #include <linux/sched/task_stack.h>
 #include <linux/gfp.h>
 #include <asm/fpu/api.h>
-
+#include <asm/uaccess.h>
 #define ASM_VMX_VMCLEAR_RAX		".byte 0x66, 0x0f, 0xc7, 0x30"
 #define ASM_VMX_VMLAUNCH		".byte 0x0f, 0x01, 0xc2"
 #define ASM_VMX_VMRESUME		".byte 0x0f, 0x01, 0xc3"
@@ -33,6 +33,9 @@
 #define FEATURE_CONTROL_VMXON_ENABLED_INSIDE_SMX FEAT_CTL_VMX_ENABLED_INSIDE_SMX
 #define MSR_IA32_FEATURE_CONTROL				 MSR_IA32_FEAT_CTL
 
+// #ifndef user_addr_max
+// #define user_addr_max() (uaccess_kernel() ? ~0UL : TASK_SIZE)
+// #endif
 #define __addr_ok(addr) ((unsigned long __force)(addr) < user_addr_max())
 #define mmap_sem		mmap_lock
 
@@ -56,11 +59,11 @@ static inline bool dune_tboot_enabled(void)
 #include <asm/i387.h>
 #endif
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 1, 0)
-#include <asm/fpu/internal.h>
-#elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 4, 0)
-#include <asm/fpu-internal.h>
-#endif
+// #if LINUX_VERSION_CODE >= KERNEL_VERSION(4, 1, 0)
+// #include <asm/fpu/internal.h>
+// #elif LINUX_VERSION_CODE >= KERNEL_VERSION(3, 4, 0)
+// #include <asm/fpu-internal.h>
+// #endif
 
 #if !defined(VMX_EPT_AD_BIT)
 #define VMX_EPT_AD_BIT (1ull << 21)

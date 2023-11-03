@@ -41,7 +41,7 @@ static int dune_is_in_guest(void)
 	return __this_cpu_read(local_vcpu) != NULL;
 }
 
-static int dune_is_user_mode(void)
+static unsigned int dune_is_user_mode(void)
 {
 	return 0;
 }
@@ -71,9 +71,11 @@ static unsigned long dune_get_guest_ip(void)
 }
 
 static struct perf_guest_info_callbacks dune_guest_cbs = {
-	.is_in_guest = dune_is_in_guest,
-	.is_user_mode = dune_is_user_mode,
-	.get_guest_ip = dune_get_guest_ip,
+	// .is_in_guest = dune_is_in_guest,
+	// .is_user_mode = dune_is_user_mode,
+	// .get_guest_ip = dune_get_guest_ip,
+	.state = dune_is_user_mode,
+	.get_ip = dune_get_guest_ip
 };
 
 static int dune_enter(struct dune_config *conf, int64_t *ret)
