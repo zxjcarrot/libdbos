@@ -23,10 +23,12 @@ static void do_handle_dude(int s)
 	char *p;
 	int fd;
 
+	dune_printf("before read\n");
 	rc = read(s, buf, sizeof(buf) - 1);
 	if (rc <= 0)
 		return;
 
+	dune_printf("after read\n");
 	buf[rc] = 0;
 
 	p = strchr(buf, '\r');
@@ -45,7 +47,7 @@ static void do_handle_dude(int s)
 
 	if (write(s, buf, strlen(buf)) != strlen(buf))
 		return;
-
+	dune_printf("after write\n");
 	fd = open("index.html", O_RDONLY);
 	if (fd == -1)
 		return;
@@ -58,15 +60,16 @@ static void do_handle_dude(int s)
 	}
 
 	close(fd);
+	dune_printf("do_handle_dude completes\n");
 	return;
 }
 
 static void *pthread(void *arg)
 {
 	int s = (long) arg;
-
+	dune_printf("pthread\n");
 	do_handle_dude(s);
-
+	dune_printf("pthread done\n");
 	return NULL;
 }
 

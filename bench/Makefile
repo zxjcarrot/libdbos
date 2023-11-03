@@ -1,5 +1,5 @@
 CC	:= gcc
-CFLAGS	:= -Wall -g -MD -O3 -I../
+CFLAGS	:= -Wall -g -MD -O0 -I../
 LDFLAGS := -ldune -lpthread
 
 bench_files := bench_dune bench_dune_ring bench_linux

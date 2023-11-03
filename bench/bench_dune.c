@@ -64,21 +64,41 @@ static void benchmark2(void)
 	}
 }
 
+
+static void syscall_handler(struct dune_tf *tf)
+{
+	// static int counter = 0;
+	// int syscall_num = tf->rax;
+	// ++counter;
+	// if (syscall_num == 666) {
+	// 	dune_ret_from_user(0);
+	// 	return;
+	// }
+
+	// dune_passthrough_syscall(tf);
+	dune_ret_from_user(0);
+}
+
 static void benchmark_syscall(void)
 {
 	int i;
 	unsigned long ticks;
 
+	dune_register_syscall_handler(syscall_handler);
+
 	synch_tsc();
 	ticks = dune_get_ticks();
 
-	for (i = 0; i < N; i++) {
-		int ret;
+	// for (i = 0; i < N; i++) {
+	// 	int ret;
 
-		asm volatile("movq $39, %%rax \n\t" // get_pid
-					 "vmcall \n\t"
-					 "mov %%eax, %0 \n\t"
-					 : "=r"(ret)::"rax");
+	// 	asm volatile("movq $39, %%rax \n\t" // get_pid
+	// 				 "vmcall \n\t"
+	// 				 "mov %%eax, %0 \n\t"
+	// 				 : "=r"(ret)::"rax");
+	// }
+	for (i = 0; i < N; i++) {
+		syscall(666);
 	}
 
 	dune_printf("System call took %ld cycles\n",

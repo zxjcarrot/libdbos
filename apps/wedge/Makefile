@@ -1,5 +1,5 @@
 LIBDUNE	= ../../libdune
-CFLAGS	= -Wall -g -MD -I$(LIBDUNE) -fomit-frame-pointer
+CFLAGS	= -Wall -g -O0 -MD -I$(LIBDUNE) -fomit-frame-pointer -no-pie
 RANLIB	= ranlib
 LIBS	= -lsthread -ldune -lpthread
 

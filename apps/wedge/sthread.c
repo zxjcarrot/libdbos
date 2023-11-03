@@ -133,8 +133,10 @@ static void recycle(struct sthread *s)
 
 	s->st_walk = 0;
 
+	dune_printf("before while-loop in recyle\n");
 	while (seg) {
 		if (seg->s_flags & PROT_WRITE) {
+			dune_printf("walking st_pgroot=%lx \n", (uintptr_t)s->st_pgroot);
 			dune_vm_page_walk(s->st_pgroot, (void*) seg->s_start,
 					  (void*) seg->s_end - 4096,
 					  walk_recycle, s);
@@ -143,10 +145,12 @@ static void recycle(struct sthread *s)
 		seg = seg->s_next;
 	}
 
+	dune_printf("after while-loop in recyle\n");
 	s->st_walk = 0;
 	dune_vm_page_walk(s->st_pgroot, (void*) s->st_stack, 
 			  (void*) (s->st_stack + STACK_SIZE - 4096),
 			  walk_recycle_stack, s);
+	dune_printf("end in recyle\n");
 }
 
 static int has_fd_perm(struct sthread *s, int fd, int perm)
@@ -269,10 +273,38 @@ static int has_mem_perm(struct sthread *s, void *ptr, unsigned long len)
 	return rc == 0;
 }
 
+
+static void pgflt_handler(uintptr_t addr, uint64_t fec, struct dune_tf *tf)
+{
+	static unsigned long cnt = 0;
+	++cnt;
+	ptent_t *pte;
+	bool was_user = (tf->cs & 0x3);
+	dune_printf("pgroot %lx page fault %lx fec %lx tf_rsp %lx tf_rip %lx cnt %ld was_user %d\n", (unsigned long)pgroot, addr, fec, tf->rsp, tf->rip, cnt, was_user);
+	if (was_user) {
+		dune_vm_lookup(_kstate->ks_current->st_pgroot, (void *)addr, CREATE_NORMAL, &pte);
+		*pte |= PTE_P |PTE_U| PTE_W;// | PTE_ADDR(dune_va_to_pa((void *) addr));
+	} else {
+		dune_vm_lookup(pgroot, (void *)addr, CREATE_NORMAL, &pte);
+		*pte |= PTE_P | PTE_W;// | PTE_ADDR(dune_va_to_pa((void *) addr));
+	}
+	
+}
+
 static void syscall_handler(struct dune_tf *tf)
 {
-        int syscall_num = (int) tf->rax;
+
 	struct sthread *current = _kstate->ks_current;
+	int syscall_num = (int) tf->rax;
+	if (syscall_num == 666) {
+		current->st_ret = (void*) ARG0(tf);
+		recycle(current);
+		current->st_state = ST_ZOMBIE;
+		dune_ret_from_user((int) ARG0(tf));
+		return;
+	}
+	dune_passthrough_syscall(tf);
+	return;
 	int fd = -1, perm = -1;
 	int rc;
 	int need_resched = 0;
@@ -468,7 +500,8 @@ int sthread_init(void)
 	if (dune_init_and_enter())
 		return -1;
 
-        dune_register_syscall_handler(syscall_handler);
+	dune_register_pgflt_handler(pgflt_handler);
+    dune_register_syscall_handler(syscall_handler);
 
 	_kstate = kmalloc(sizeof(*_kstate));
 
@@ -579,7 +612,7 @@ struct sthread *create_new_sthread(sc_t *sc)
 {
 	struct sthread *s;
 	struct segment *seg = _segments.s_next;
-
+	int ret;
 	s = kmalloc(sizeof(*s));
 	memset(s, 0, sizeof(*s));
 
@@ -607,18 +640,24 @@ struct sthread *create_new_sthread(sc_t *sc)
 
         s->st_pgroot = dune_vm_clone(pgroot);
 
-	dune_vm_page_walk(s->st_pgroot, VA_START, VA_END, walk_protect, s);
-
+	ret = dune_vm_page_walk(s->st_pgroot, VA_START, VA_END, walk_protect, s);
+	if (ret != 0) {
+		err(1, "ret(%d) != 0", ret);
+	}
+	printf("cloning completes\n");
 	s->st_walk = 0;
 	while (seg) {
 		if (seg->s_flags & PROT_WRITE) {
-			dune_vm_page_walk(s->st_pgroot, (void*) seg->s_start,
+			ret = dune_vm_page_walk(s->st_pgroot, (void*) seg->s_start,
 					  (void*) seg->s_end - 4096, walk_remap, s);
+			if (ret != 0) {
+				err(1, "ret(%d) != 0", ret);
+			}
 		}
 
 		seg = seg->s_next;
 	}
-
+	printf("PROT_WRITE completes\n");
 	return s;
 }
 

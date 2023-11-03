@@ -66,6 +66,12 @@ static int test_pgflt(void)
 	return ret;
 }
 
+static void userlevel_empty_call(void)
+{
+	tsc++;
+	syscall(SYS_gettid);
+}
+
 static void userlevel_syscall(void)
 {
 	int i;
@@ -84,6 +90,12 @@ static void syscall_handler2(struct dune_tf *tf)
 		dune_ret_from_user(0);
 	}
 	dune_passthrough_syscall(tf);
+}
+
+
+static void syscall_handler3(struct dune_tf *tf)
+{
+	dune_ret_from_user(0);
 }
 
 static int test_syscall(void)
@@ -110,6 +122,81 @@ static int test_syscall(void)
 	return ret;
 }
 
+
+static int test_ring_switch(void)
+{
+	int ret;
+	unsigned long sp;
+	unsigned long start_tsc;
+	struct dune_tf *tf = malloc(sizeof(struct dune_tf));
+	if (!tf)
+		return -ENOMEM;
+
+	printf("measuring ring switch overhead... ");
+
+	dune_register_syscall_handler(&syscall_handler3);
+
+
+	start_tsc = dune_get_ticks();
+	for (int i = 0; i < N; ++i) {
+		asm("movq %%rsp, %0" : "=r"(sp));
+
+		tf->rip = (unsigned long)&userlevel_empty_call;
+		tf->rsp = sp - 10000;
+		tf->rflags = 0x0;
+
+		ret = dune_jump_to_user(tf);
+	}
+	
+	printf("each ring switch took %ld cycles\n", (dune_get_ticks() - start_tsc) / N);
+	free(tf);
+	return ret;
+}
+
+static void syscall_handler4(struct dune_tf *tf)
+{
+	if (tf->rax == 555) {
+		return;
+	}
+	dune_ret_from_user(0);
+}
+
+static void g3_syscall_bench() {
+	for (int i = 0; i < N; ++i) {
+		syscall(555); // perform an empty system call
+	}
+	syscall(666); // exit from userspace
+}
+
+static int test_g3_syscall(void)
+{
+	int ret;
+	unsigned long sp;
+	unsigned long start_tsc;
+	struct dune_tf *tf = malloc(sizeof(struct dune_tf));
+	if (!tf)
+		return -ENOMEM;
+
+	printf("measuring g3 empty syscall overhead... ");
+
+	dune_register_syscall_handler(&syscall_handler4);
+
+	start_tsc = dune_get_ticks();
+	//for (int i = 0; i < N; ++i) {
+		asm("movq %%rsp, %0" : "=r"(sp));
+
+		tf->rip = (unsigned long)&g3_syscall_bench;
+		tf->rsp = sp - 10000;
+		tf->rflags = 0x0;
+
+		ret = dune_jump_to_user(tf);
+	//}
+	
+	printf("each syscall round-trip took %ld cycles\n", (dune_get_ticks() - start_tsc) / N);
+	free(tf);
+	return ret;
+}
+
 int main(int argc, char *argv[])
 {
 	int ret;
@@ -122,6 +209,7 @@ int main(int argc, char *argv[])
 
 	test_pgflt();
 	test_syscall();
-
+	test_ring_switch();
+	test_g3_syscall();
 	return 0;
 }

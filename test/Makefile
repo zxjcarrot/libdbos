@@ -1,5 +1,5 @@
 CC	:= gcc
-CFLAGS	:= -Wall -g -MD -O0 -I ../ -mincoming-stack-boundary=3
+CFLAGS	:= -Wall -g -MD -O0  -no-pie -I ../ -mincoming-stack-boundary=3
 LDFLAGS := -ldune -lpthread
 MODULE_LIB := /lib/modules/$(shell uname -r)/build
 
@@ -22,7 +22,7 @@ timetest: timetest.o ../libdune/libdune.a
 	$(CC) $(CFLAGS) -static $(<) -L../libdune $(LDFLAGS) -o $(@)
 
 test: test.o ../libdune/libdune.a
-	$(CC) $(CFLAGS) -static $(<) -L../libdune $(LDFLAGS) -o $(@)
+	$(CC) $(CFLAGS)  $(<) -L../libdune $(LDFLAGS) -o $(@)
 
 test_sandbox: test_sandbox.o
 	$(CC) $(CFLAGS) -static $(<) -pthread -o $(@)
