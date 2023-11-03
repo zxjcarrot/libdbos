@@ -110,9 +110,9 @@ void dune_procmap_iterate(dune_procmap_cb cb)
 
 static void __dune_procmap_dump_helper(const struct dune_procmap_entry *e)
 {
-	printf("0x%016lx-0x%016lx %c%c%c%c %08lx %s\n", e->begin, e->end,
+	printf("0x%016lx-0x%016lx %c%c%c%c %08lx %s %lu KiB\n", e->begin, e->end,
 		   e->r ? 'R' : '-', e->w ? 'W' : '-', e->x ? 'X' : '-',
-		   e->p ? 'P' : 'S', e->offset, e->path);
+		   e->p ? 'P' : 'S', e->offset, e->path, (uint64_t)(e->end - e->begin) / 1024);
 }
 
 void dune_procmap_dump()

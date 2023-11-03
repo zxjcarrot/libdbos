@@ -1,5 +1,5 @@
 CC      = gcc
-CFLAGS  = -Wall -g -O3 -MD
+CFLAGS  = -Wall -g -O2 -MD -mincoming-stack-boundary=3
 LDFLAGS = -static -L. -ldune
 OBJ     = entry.o dune.o vsyscall.o elf.o vm.o util.o page.o procmap.o debug.o
 NOFPU_OBJ = trap.o

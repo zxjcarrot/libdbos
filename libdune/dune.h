@@ -263,6 +263,8 @@ extern int dune_vm_map_pages(ptent_t *root, void *va, size_t len, int perm);
 extern void dune_vm_unmap(ptent_t *root, void *va, size_t len);
 extern int dune_vm_lookup(ptent_t *root, void *va, int create,
 						  ptent_t **pte_out);
+extern int dune_vm_lookup2(ptent_t *root, void *va, int create, bool * created,
+						  ptent_t **pte_out);
 
 extern int dune_vm_insert_page(ptent_t *root, void *va, struct page *pg,
 							   int perm);

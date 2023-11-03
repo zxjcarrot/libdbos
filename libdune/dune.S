@@ -181,6 +181,7 @@
 1:
 	.endm
 
+/* %rdi, %rsi, %rdx, %rcx, %r8, and %r9 */
 .globl __dune_enter
 __dune_enter:
 	pushfq
@@ -188,7 +189,7 @@ __dune_enter:
 	SAVE_REGS 1, 0
 	SAVE_REST
 	movq	%rsp, DUNE_CFG_RSP(%rsi)
-	movq	%rsi, %rdx
+	movq	%rsi, %rdx /* 3rd argument, conf */
 	movq	$IOCTL_DUNE_ENTER, %rsi
 	movq	$16, %rax /* __NR_ioctl */
 	syscall
@@ -196,12 +197,12 @@ __dune_enter:
 	cmpq	$0, %rax
 	jnz __dune_ret_fail
 
-	movq	%rdi, %r12
-	movq	%rdx, %r13
+	movq	%rdi, %r12 /* rdi = dune_fd */
+	movq	%rdx, %r13 /* rdx = conf */
 
 __dune_retry:
 	/* Dune mode was terminated, call on_dune_exit handler function */
-	movq	%r13, %rdi
+	movq	%r13, %rdi /* set the first argument to conf */
 	/* Update RSP to point to the top of the stack as seen from inside Dune
 	 * mode. */
 	movq	DUNE_CFG_RSP(%rdi), %rsp
@@ -296,7 +297,7 @@ __dune_syscall:
 	pushq	%r11
 	popfq
 	vmcall
-	jmp	*%rcx
+	jmp	*%rcx # the instruction pointer right after syscall instruction is stored in clobbered in rcx
 
 1:
 	/* first switch to the kernel stack */
@@ -408,7 +409,7 @@ __dune_intr:
 	jmp __dune_intr_with_num
 	i = i + 1
 	.endr
-
+/* http://6.s081.scripts.mit.edu/sp18/x86-64-architecture-guide.html */
 __dune_intr_with_num:
 	/* save all registers */
 	subq	$REG_END, %rsp

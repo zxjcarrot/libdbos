@@ -38,7 +38,7 @@ int dune_printf(const char *fmt, ...)
 	char buf[1024];
 
 	va_start(args, fmt);
-
+	
 	vsprintf(buf, fmt, args);
 
 	return dune_puts(buf);

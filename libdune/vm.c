@@ -58,6 +58,8 @@ int __dune_vm_page_walk(ptent_t *dir, void *start_va, void *end_va,
 		void *n_start_va, *n_end_va;
 		void *cur_va = base_va + PDADDR(level, i);
 		ptent_t *pte = &dir[i];
+		
+		//printf("dir=%lx, &pte=%lx, i=%d, lvl=%d\n", (uintptr_t)dir, (uintptr_t)pte, i, level);
 
 		if (level == 0) {
 			if (create == CREATE_NORMAL || *pte) {
@@ -117,8 +119,8 @@ int dune_vm_page_walk(ptent_t *root, void *start_va, void *end_va,
 	return __dune_vm_page_walk(root, start_va, end_va, cb, arg, 3, CREATE_NONE);
 }
 
-int dune_vm_lookup(ptent_t *root, void *va, int create, ptent_t **pte_out)
-{
+static int dune_vm_lookup_internal(ptent_t *root, void *va, int create, bool * created,
+						  ptent_t **pte_out) {
 	// XXX: Using PA == VA
 	int i, j, k, l;
 	ptent_t *pml4 = root, *pdpte, *pde, *pte;
@@ -131,10 +133,10 @@ int dune_vm_lookup(ptent_t *root, void *va, int create, ptent_t **pte_out)
 	if (!pte_present(pml4[i])) {
 		if (!create)
 			return -ENOENT;
-
+		//dune_printf("alloc_page\n");
 		pdpte = alloc_page();
 		memset(pdpte, 0, PGSIZE);
-
+		*created = true;
 		pml4[i] = PTE_ADDR(pdpte) | PTE_DEF_FLAGS;
 	} else
 		pdpte = (ptent_t *)PTE_ADDR(pml4[i]);
@@ -142,10 +144,10 @@ int dune_vm_lookup(ptent_t *root, void *va, int create, ptent_t **pte_out)
 	if (!pte_present(pdpte[j])) {
 		if (!create)
 			return -ENOENT;
-
+		//dune_printf("alloc_page\n");
 		pde = alloc_page();
 		memset(pde, 0, PGSIZE);
-
+		*created = true;
 		pdpte[j] = PTE_ADDR(pde) | PTE_DEF_FLAGS;
 	} else if (pte_big(pdpte[j])) {
 		*pte_out = &pdpte[j];
@@ -156,10 +158,10 @@ int dune_vm_lookup(ptent_t *root, void *va, int create, ptent_t **pte_out)
 	if (!pte_present(pde[k])) {
 		if (!create)
 			return -ENOENT;
-
+		//dune_printf("alloc_page\n");
 		pte = alloc_page();
 		memset(pte, 0, PGSIZE);
-
+		*created = true;
 		pde[k] = PTE_ADDR(pte) | PTE_DEF_FLAGS;
 	} else if (pte_big(pde[k])) {
 		*pte_out = &pde[k];
@@ -169,6 +171,16 @@ int dune_vm_lookup(ptent_t *root, void *va, int create, ptent_t **pte_out)
 
 	*pte_out = &pte[l];
 	return 0;
+}
+
+int dune_vm_lookup(ptent_t *root, void *va, int create, ptent_t **pte_out)
+{
+	bool created = false;
+	return dune_vm_lookup_internal(root, va, create, &created, pte_out);
+}
+int dune_vm_lookup2(ptent_t *root, void *va, int create, bool * created, ptent_t **pte_out)
+{
+	return dune_vm_lookup_internal(root, va, create, created, pte_out);
 }
 
 static inline ptent_t get_pte_perm(int perm)
@@ -250,6 +262,7 @@ static int __dune_vm_map_phys_helper(const void *arg, ptent_t *pte, void *va)
 
 int dune_vm_map_phys(ptent_t *root, void *va, size_t len, void *pa, int perm)
 {
+	printf("dune_vm_map_phys: virtual [%lx-%lx] to physical [%lx-%lx]\n", (uintptr_t)va, (uintptr_t)((char*)va + len), (uintptr_t)pa, (uintptr_t)((char*)pa + len));
 	int ret;
 	struct map_phys_data data;
 	int create;

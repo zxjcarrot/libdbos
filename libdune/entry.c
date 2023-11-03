@@ -368,6 +368,7 @@ static int __setup_mappings_full(struct dune_layout *layout)
 		pgroot, (void *)layout->base_stack, GPA_STACK_SIZE,
 		(void *)dune_stack_addr_to_pa((void *)layout->base_stack),
 		PERM_R | PERM_W | PERM_X | PERM_U);
+	printf("dune: stack_v_addr %lx stack_p_addr %lx\n", (uintptr_t)layout->base_stack, dune_stack_addr_to_pa((void *)layout->base_stack));
 	if (ret)
 		return ret;
 
@@ -393,7 +394,7 @@ static int setup_mappings(bool full)
 	phys_limit = layout.phys_limit;
 	mmap_base = layout.base_map;
 	stack_base = layout.base_stack;
-
+	printf("dune: phys_limit %lx mmap_base %lx stack_base %lx\n", phys_limit, mmap_base, stack_base);
 	if (full)
 		ret = __setup_mappings_full(&layout);
 	else
@@ -444,8 +445,10 @@ static void map_stack_cb(const struct dune_procmap_entry *e)
 
 	asm("mov %%rsp, %0" : "=r"(esp));
 
-	if (esp >= e->begin && esp < e->end)
+	if (esp >= e->begin && esp < e->end) {
 		map_ptr((void *)e->begin, e->end - e->begin);
+		printf("mapped stack [%lx-%lx]\n", (uintptr_t)e->begin, (uintptr_t)e->end);
+	}
 }
 
 static void map_stack(void)
@@ -470,7 +473,7 @@ static int do_dune_enter(struct dune_percpu *percpu)
 
 	/* NOTE: We don't setup the general purpose registers because __dune_ret
 	 * will restore them as they were before the __dune_enter call */
-
+	printf("dune_config at %lx\n", (uintptr_t)conf);
 	ret = __dune_enter(dune_fd, conf);
 	if (ret) {
 		printf("dune: entry to Dune mode failed, ret is %d\n", ret);
@@ -486,6 +489,22 @@ static int do_dune_enter(struct dune_percpu *percpu)
 	return 0;
 }
 
+// static void dune_dump_config(struct dune_config *conf)
+// {
+// 	printf("dune: --- Begin Config Dump of conf at %lx ---\n", (uintptr_t)conf);
+// 	printf("dune: RET %lld STATUS %lld\n", conf->ret, conf->status);
+// 	printf("dune: RFLAGS 0x%016llx CR3 0x%016llx RIP 0x%016llx\n", conf->rflags, conf->cr3, conf->rip);
+// 	printf("dune: RAX 0x%016llx RCX 0x%016llx\n", conf->rax, conf->rcx);
+// 	printf("dune: RDX 0x%016llx RBX 0x%016llx\n", conf->rdx, conf->rbx);
+// 	printf("dune: RSP 0x%016llx RBP 0x%016llx\n", conf->rsp, conf->rbp);
+// 	printf("dune: RSI 0x%016llx RDI 0x%016llx\n", conf->rsi, conf->rdi);
+// 	printf("dune: R8  0x%016llx R9  0x%016llx\n", conf->r8, conf->r9);
+// 	printf("dune: R10 0x%016llx R11 0x%016llx\n", conf->r10, conf->r11);
+// 	printf("dune: R12 0x%016llx R13 0x%016llx\n", conf->r12, conf->r13);
+// 	printf("dune: R14 0x%016llx R15 0x%016llx\n", conf->r14, conf->r15);
+// 	printf("dune: --- End Config Dump ---\n");
+// }
+
 /**
  * on_dune_exit - handle Dune exits
  *
@@ -494,6 +513,8 @@ static int do_dune_enter(struct dune_percpu *percpu)
  */
 void on_dune_exit(struct dune_config *conf)
 {
+	//dune_dump_config(conf);
+	printf("on_dune_exit: tid: %d\n", gettid());
 	switch (conf->ret) {
 	case DUNE_RET_EXIT:
 		syscall(SYS_exit, conf->status);
@@ -505,6 +526,7 @@ void on_dune_exit(struct dune_config *conf)
 		printf("dune: exit due to interrupt %lld\n", conf->status);
 		break;
 	case DUNE_RET_SIGNAL:
+		printf("dune: reenter dune due to signal %lld\n", conf->status);
 		__dune_go_dune(dune_fd, conf);
 		break;
 	case DUNE_RET_UNHANDLED_VMEXIT:
@@ -645,7 +667,7 @@ int dune_init(bool map_full)
 		printf("dune: unable to setup memory layout\n");
 		goto err;
 	}
-
+	printf("dune: mapping %d finished\n", map_full);
 	if ((ret = setup_syscall())) {
 		printf("dune: unable to setup system calls\n");
 		goto err;

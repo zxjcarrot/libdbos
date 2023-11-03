@@ -59,7 +59,7 @@ static bool addr_is_mapped(void *va)
 	return 1;
 }
 
-#define STACK_DEPTH 12
+#define STACK_DEPTH 20
 
 static void dune_dump_stack(struct dune_tf *tf)
 {
@@ -68,7 +68,7 @@ static void dune_dump_stack(struct dune_tf *tf)
 
 	// we use dune_printf() because this might
 	// have to work even if libc doesn't.
-	dune_printf("dune: Dumping Stack Contents...\n");
+	dune_printf("dune: Dumping Stack Contents %llx...\n", tf->rsp);
 	for (i = 0; i < STACK_DEPTH; i++) {
 		if (!addr_is_mapped(&sp[i])) {
 			dune_printf("dune: reached unmapped addr\n");
@@ -100,8 +100,34 @@ static void dump_ip(struct dune_tf *tf)
 	dune_hexdump(p, len);
 }
 
+#include <execinfo.h>
+#include <signal.h>
+#include <stdlib.h>
+#include <unistd.h>
+void dump_stack_trace() {
+  void* callstack[128];
+  int i, frames = backtrace(callstack, 128);
+  char** strs = backtrace_symbols(callstack, frames);
+  for (i = 0; i < frames; ++i) {
+	dune_printf("%s\n", strs[i]);
+  }
+  free(strs);
+}
+
+static uint64_t search_rip;
+void dune_procmap_find_mapping(const struct dune_procmap_entry * e) {
+	if (e->begin <= search_rip && search_rip <= e->end) {
+		dune_printf("dune: found mapping %s for rip %lx : 0x%016lx-0x%016lx %c%c%c%c %08lx %s %lu KiB\n", e->path, search_rip, e->begin, e->end,
+		   e->r ? 'R' : '-', e->w ? 'W' : '-', e->x ? 'X' : '-',
+		   e->p ? 'P' : 'S', e->offset, e->path, (uint64_t)(e->end - e->begin) / 1024);
+	}
+}
+
+extern void dune_procmap_iterate(dune_procmap_cb cb);
 void dune_dump_trap_frame(struct dune_tf *tf)
 {
+	search_rip = tf->rip;
+	dune_procmap_iterate(dune_procmap_find_mapping);
 	// we use dune_printf() because this might
 	// have to work even if libc doesn't.
 	dune_printf("dune: --- Begin Trap Dump ---\n");
@@ -119,6 +145,7 @@ void dune_dump_trap_frame(struct dune_tf *tf)
 	dune_dump_stack(tf);
 	dump_ip(tf);
 	dune_printf("dune: --- End Trap Dump ---\n");
+	//dump_stack_trace();
 }
 
 void dune_syscall_handler(struct dune_tf *tf)
@@ -128,12 +155,24 @@ void dune_syscall_handler(struct dune_tf *tf)
 	} else {
 		dune_printf("missing handler for system call - #%d\n", tf->rax);
 		dune_dump_trap_frame(tf);
-		dune_die();
+		//dune_die();
+		asm volatile("movq $60, %rax\n" // exit
+				 "vmcall\n");
 	}
 }
 
 void dune_trap_handler(int num, struct dune_tf *tf)
 {
+	// unsigned long ret;
+	// asm volatile("movq $500, %%rax\n\t" // print cpu states
+	// 			 "movq %1, %%rdi\n\t" // print cpu states
+	// 			 "movq %2, %%rsi\n\t"
+	// 			 "movq %3, %%rdx\n\t"
+	// 			 "movq %4, %%rcx\n\t"
+	// 			 "vmcall\n\t"
+	// 			 "movq %%rax, %0\n\t"
+	// 			 : "=r"((unsigned long)ret)
+	// 			 :"r"((unsigned long) num), "r"((unsigned long) tf->rip), "r"((unsigned long)tf->rsp), "r"((unsigned long)tf->err): "rax", "rdi", "rsi", "rdx", "rcx");
 	if (intr_cbs[num]) {
 		intr_cbs[num](tf);
 		return;
@@ -144,10 +183,13 @@ void dune_trap_handler(int num, struct dune_tf *tf)
 		if (pgflt_cb) {
 			pgflt_cb(read_cr2(), tf->err, tf);
 		} else {
-			dune_printf("unhandled page fault %lx %lx\n", read_cr2(), tf->err);
-			dune_dump_trap_frame(tf);
+			//printf("unhandled page fault %lx %lx\n", read_cr2(), tf->err);
+			dune_printf("unhandled page fault %lx %lx sp %lx rip %lx\n", read_cr2(), tf->err, tf->rsp, tf->rip);
 			dune_procmap_dump();
+			dune_dump_trap_frame(tf);
 			dune_die();
+			// asm volatile("movq $60, %rax\n" // exit
+			// 	 "vmcall\n");
 		}
 		break;
 
@@ -157,11 +199,51 @@ void dune_trap_handler(int num, struct dune_tf *tf)
 		dune_printf("fatal exception %d, code %lx - dying...\n", num, tf->err);
 		dune_dump_trap_frame(tf);
 		dune_die();
+		asm volatile("movq $60, %rax\n" // exit
+				 "vmcall\n");
 		break;
 
+	case T_DEBUG:
+		asm volatile("movq $60, %rax\n" // exit
+				 "vmcall\n");
+		break;
+	case T_DIVIDE:
+		asm volatile("movq $60, %rax\n" // exit
+				 "vmcall\n");
+		break;
+	case T_TSS:
+		asm volatile("movq $60, %rax\n" // exit
+				 "vmcall\n");
+		break;
+	case T_STACK:
+		asm volatile("movq $60, %rax\n" // exit
+				 "vmcall\n");
+		break;
+	case T_OFLOW:
+		asm volatile("movq $60, %rax\n" // exit
+				 "vmcall\n");
+		break;
+	case T_ILLOP:
+		asm volatile("movq $60, %rax\n" // exit
+				 "vmcall\n");
+		break;
+	case T_DEVICE:
+		asm volatile("movq $60, %rax\n" // exit
+				 "vmcall\n");
+		break;
+	case T_FPERR:
+		asm volatile("movq $60, %rax\n" // exit
+				 "vmcall\n");
+		break;
+	case T_ALIGN:
+		asm volatile("movq $60, %rax\n" // exit
+				 "vmcall\n");
+		break;
 	default:
 		dune_printf("unhandled exception %d\n", num);
 		dune_dump_trap_frame(tf);
 		dune_die();
+		// asm volatile("movq $60, %rax\n" // exit
+		// 		 "vmcall\n");
 	}
 }
