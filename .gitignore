@@ -30,3 +30,5 @@ test/hugepages
 test/mprotect
 test/fork
 tags
+apps/silo
+apps/vmcache
