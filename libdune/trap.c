@@ -185,8 +185,8 @@ void dune_trap_handler(int num, struct dune_tf *tf)
 		} else {
 			//printf("unhandled page fault %lx %lx\n", read_cr2(), tf->err);
 			dune_printf("unhandled page fault %lx %lx sp %lx rip %lx\n", read_cr2(), tf->err, tf->rsp, tf->rip);
-			dune_procmap_dump();
-			dune_dump_trap_frame(tf);
+			//dune_procmap_dump();
+			//dune_dump_trap_frame(tf);
 			dune_die();
 			// asm volatile("movq $60, %rax\n" // exit
 			// 	 "vmcall\n");

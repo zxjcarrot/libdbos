@@ -119,6 +119,10 @@ int dune_vm_page_walk(ptent_t *root, void *start_va, void *end_va,
 	return __dune_vm_page_walk(root, start_va, end_va, cb, arg, 3, CREATE_NONE);
 }
 
+int dune_vm_page_walk_fill(ptent_t *root, void *start_va, void *end_va,
+							 page_walk_cb cb, const void * arg, int create) {
+	return __dune_vm_page_walk(root, start_va, end_va, cb, arg, 3, create);
+}
 static int dune_vm_lookup_internal(ptent_t *root, void *va, int create, bool * created,
 						  ptent_t **pte_out) {
 	// XXX: Using PA == VA
@@ -250,6 +254,7 @@ struct map_phys_data {
 	ptent_t perm;
 	unsigned long va_base;
 	unsigned long pa_base;
+	uint64_t pte_count;
 };
 
 static int __dune_vm_map_phys_helper(const void *arg, ptent_t *pte, void *va)
@@ -257,12 +262,12 @@ static int __dune_vm_map_phys_helper(const void *arg, ptent_t *pte, void *va)
 	struct map_phys_data *data = (struct map_phys_data *)arg;
 
 	*pte = PTE_ADDR(va - data->va_base + data->pa_base) | data->perm;
+	data->pte_count++;
 	return 0;
 }
 
 int dune_vm_map_phys(ptent_t *root, void *va, size_t len, void *pa, int perm)
 {
-	printf("dune_vm_map_phys: virtual [%lx-%lx] to physical [%lx-%lx]\n", (uintptr_t)va, (uintptr_t)((char*)va + len), (uintptr_t)pa, (uintptr_t)((char*)pa + len));
 	int ret;
 	struct map_phys_data data;
 	int create;
@@ -273,7 +278,7 @@ int dune_vm_map_phys(ptent_t *root, void *va, size_t len, void *pa, int perm)
 	data.perm = get_pte_perm(perm);
 	data.va_base = (unsigned long)va;
 	data.pa_base = (unsigned long)pa;
-
+	data.pte_count = 0;
 	if (perm & PERM_BIG)
 		create = CREATE_BIG;
 	else if (perm & PERM_BIG_1GB)
@@ -287,6 +292,7 @@ int dune_vm_map_phys(ptent_t *root, void *va, size_t len, void *pa, int perm)
 	if (ret)
 		return ret;
 
+	//printf("dune_vm_map_phys: virtual [%lx-%lx] to physical [%lx-%lx] %lu KiB, ptes created %lu\n", (uintptr_t)va, (uintptr_t)((char*)va + len), (uintptr_t)pa, (uintptr_t)((char*)pa + len), len / 1024, data.pte_count);
 	return 0;
 }
 

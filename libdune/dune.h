@@ -177,8 +177,8 @@ extern uintptr_t stack_base;
 
 static inline uintptr_t dune_mmap_addr_to_pa(void *ptr)
 {
-	return ((uintptr_t)ptr) - mmap_base + phys_limit - GPA_STACK_SIZE -
-		   GPA_MAP_SIZE;
+	return (((uintptr_t)ptr) - mmap_base)
+			+ (phys_limit - GPA_STACK_SIZE - GPA_MAP_SIZE);
 }
 
 static inline uintptr_t dune_stack_addr_to_pa(void *ptr)
@@ -233,6 +233,7 @@ static inline void dune_flush_tlb(void)
 
 static inline void load_cr3(unsigned long cr3)
 {
+	printf("load cr3 %lx\n", cr3);
 	asm("mov %%rax, %%cr3\n" : : "a"(cr3));
 }
 
@@ -277,6 +278,9 @@ extern void dune_vm_default_pgflt_handler(uintptr_t addr, uint64_t fec);
 typedef int (*page_walk_cb)(const void *arg, ptent_t *ptep, void *va);
 extern int dune_vm_page_walk(ptent_t *root, void *start_va, void *end_va,
 							 page_walk_cb cb, const void *arg);
+
+extern int dune_vm_page_walk_fill(ptent_t *root, void *start_va, void *end_va,
+							 page_walk_cb cb, const void *arg, int create);
 
 // process memory maps
 

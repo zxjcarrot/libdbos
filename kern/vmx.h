@@ -50,6 +50,12 @@ enum vmx_reg {
 	NR_VCPU_REGS
 };
 
+struct vmx_common {
+	spinlock_t ept_lock;
+	unsigned long ept_root;
+	unsigned long eptp;
+	bool ept_ad_enabled;
+};
 struct vmx_vcpu {
 	struct list_head list;
 	int cpu;
@@ -67,10 +73,12 @@ struct vmx_vcpu {
 	u64 host_rsp;
 	u64 regs[NR_VCPU_REGS];
 	u64 cr2;
-	u64 exit_count;
+	u64 pgflt_count;
+	u64 pgtbl_pages_created;
+	u64 host_pages_connected;
 	int shutdown;
 	int ret_code;
-
+	u64 exit_count[EXIT_REASON_BUS_LOCK + 1];
 	struct msr_autoload {
 		unsigned nr;
 		struct vmx_msr_entry guest[NR_AUTOLOAD_MSRS];

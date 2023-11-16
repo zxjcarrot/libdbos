@@ -42,7 +42,7 @@ typedef unsigned __PTRDIFF_TYPE__ physaddr_t;
 // Page numbers are 64 bits long.
 typedef uint64_t ppn_t;
 
-#define PRIu64 "ld"
-#define PRIx64 "lx"
+//#define PRIu64 "ld"
+//#define PRIx64 "lx"
 
 #endif /* !JOS_MACHINE_TYPES_H */

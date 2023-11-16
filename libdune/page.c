@@ -10,7 +10,7 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <pthread.h>
-
+#include <stdio.h>
 #include "dune.h"
 
 #define GROW_SIZE 512
@@ -29,11 +29,14 @@ static void *do_mapping(void *base, unsigned long len)
 			   MAP_FIXED | MAP_HUGETLB | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
 	if (mem != (void *)base) {
+		printf("mmap for huge page failed: %s\n", strerror(errno));
 		// try again without huge pages
 		mem = mmap((void *)base, len, PROT_READ | PROT_WRITE,
 				   MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-		if (mem != (void *)base)
+		if (mem != (void *)base) {
+			printf("mmap for huge page failed 2: %s\n", strerror(errno));
 			return NULL;
+		}
 	}
 
 	return mem;

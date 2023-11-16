@@ -316,7 +316,7 @@ static void __setup_mappings_cb(const struct dune_procmap_entry *ent)
 	assert(!ret);
 }
 
-static int __setup_mappings_precise(void)
+static int __setup_mappings_precise(struct dune_layout *layout)
 {
 	int ret;
 
@@ -356,19 +356,22 @@ static int __setup_mappings_full(struct dune_layout *layout)
 						   PERM_R | PERM_W | PERM_X | PERM_U);
 	if (ret)
 		return ret;
+	printf("dune: start_v_addr %lx start_p_addr %lx, size %lu MiB\n", 0UL,  0UL, (1UL << 32) / 1024 / 1024);
 
+	//uint64_t map_size = 1ULL << 32;
 	ret =
 		dune_vm_map_phys(pgroot, (void *)layout->base_map, GPA_MAP_SIZE,
 						 (void *)dune_mmap_addr_to_pa((void *)layout->base_map),
 						 PERM_R | PERM_W | PERM_X | PERM_U);
 	if (ret)
 		return ret;
+	printf("dune: map_v_addr %lx map_p_addr %lx, map_size %lu MiB\n", (uintptr_t)layout->base_map,  dune_mmap_addr_to_pa((void *)layout->base_map), GPA_MAP_SIZE / 1024 / 1024);
 
 	ret = dune_vm_map_phys(
 		pgroot, (void *)layout->base_stack, GPA_STACK_SIZE,
 		(void *)dune_stack_addr_to_pa((void *)layout->base_stack),
 		PERM_R | PERM_W | PERM_X | PERM_U);
-	printf("dune: stack_v_addr %lx stack_p_addr %lx\n", (uintptr_t)layout->base_stack, dune_stack_addr_to_pa((void *)layout->base_stack));
+	printf("dune: stack_v_addr %lx stack_p_addr %lx, stack_size %lu MiB\n", (uintptr_t)layout->base_stack, dune_stack_addr_to_pa((void *)layout->base_stack), GPA_STACK_SIZE/1024/1024);
 	if (ret)
 		return ret;
 
@@ -377,6 +380,7 @@ static int __setup_mappings_full(struct dune_layout *layout)
 						   PERM_R | PERM_W | PERM_BIG);
 	if (ret)
 		return ret;
+	printf("dune: pgbase_v_addr %lx pgbase_p_addr %lx, PAGE %lu MiB\n", PAGEBASE, dune_va_to_pa((void *)PAGEBASE), (MAX_PAGES * PGSIZE)/1024/1024);
 
 	dune_procmap_iterate(setup_vdso_cb);
 	setup_vsyscall();
@@ -398,7 +402,7 @@ static int setup_mappings(bool full)
 	if (full)
 		ret = __setup_mappings_full(&layout);
 	else
-		ret = __setup_mappings_precise();
+		ret = __setup_mappings_precise(&layout);
 
 	return ret;
 }
@@ -447,7 +451,7 @@ static void map_stack_cb(const struct dune_procmap_entry *e)
 
 	if (esp >= e->begin && esp < e->end) {
 		map_ptr((void *)e->begin, e->end - e->begin);
-		printf("mapped stack [%lx-%lx]\n", (uintptr_t)e->begin, (uintptr_t)e->end);
+		//printf("mapped stack [%lx-%lx]\n", (uintptr_t)e->begin, (uintptr_t)e->end);
 	}
 }
 
@@ -473,7 +477,7 @@ static int do_dune_enter(struct dune_percpu *percpu)
 
 	/* NOTE: We don't setup the general purpose registers because __dune_ret
 	 * will restore them as they were before the __dune_enter call */
-	printf("dune_config at %lx\n", (uintptr_t)conf);
+	//printf("dune_config at %lx with pgroot %llx\n", (uintptr_t)conf, conf->cr3);
 	ret = __dune_enter(dune_fd, conf);
 	if (ret) {
 		printf("dune: entry to Dune mode failed, ret is %d\n", ret);
@@ -514,7 +518,9 @@ static int do_dune_enter(struct dune_percpu *percpu)
 void on_dune_exit(struct dune_config *conf)
 {
 	//dune_dump_config(conf);
-	printf("on_dune_exit: tid: %d\n", gettid());
+	if (conf->ret != DUNE_RET_EXIT) {
+		printf("on_dune_exit: tid: %d, ret %lld\n", gettid(), conf->ret);
+	}
 	switch (conf->ret) {
 	case DUNE_RET_EXIT:
 		syscall(SYS_exit, conf->status);

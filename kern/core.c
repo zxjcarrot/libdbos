@@ -38,7 +38,10 @@ MODULE_DESCRIPTION("A driver for Dune");
  */
 static int dune_is_in_guest(void)
 {
-	return __this_cpu_read(local_vcpu) != NULL;
+	if (__this_cpu_read(local_vcpu) == NULL) {
+		return 0;
+	}
+	return PERF_GUEST_ACTIVE;
 }
 
 static unsigned int dune_is_user_mode(void)

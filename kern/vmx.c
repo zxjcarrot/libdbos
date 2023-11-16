@@ -508,6 +508,19 @@ static void vmx_setup_constant_host_state(void)
 	vmcs_writel(HOST_CR3, read_cr3()); /* 22.2.3 */
 
 	vmcs_write16(HOST_CS_SELECTOR, __KERNEL_CS); /* 22.2.4 */
+// #ifdef CONFIG_X86_64
+// 	/*
+// 	 * Load null selectors, so we can avoid reloading them in
+// 	 * vmx_prepare_switch_to_host(), in case userspace uses
+// 	 * the null selectors too (the expected case).
+// 	 */
+// 	vmcs_write16(HOST_DS_SELECTOR, 0);
+// 	vmcs_write16(HOST_ES_SELECTOR, 0);
+// #else
+// 	vmcs_write16(HOST_DS_SELECTOR, __KERNEL_DS);  /* 22.2.4 */
+// 	vmcs_write16(HOST_ES_SELECTOR, __KERNEL_DS);  /* 22.2.4 */
+// #endif
+
 	vmcs_write16(HOST_DS_SELECTOR, __KERNEL_DS); /* 22.2.4 */
 	vmcs_write16(HOST_ES_SELECTOR, __KERNEL_DS); /* 22.2.4 */
 	vmcs_write16(HOST_SS_SELECTOR, __KERNEL_DS); /* 22.2.4 */
@@ -783,8 +796,11 @@ static void vmx_setup_initial_guest_state(struct dune_config *conf)
 	unsigned long tmpl;
 	unsigned long cr4 = X86_CR4_PAE | X86_CR4_VMXE | X86_CR4_OSXMMEXCPT |
 						X86_CR4_PGE | X86_CR4_OSFXSR;
-	if (boot_cpu_has(X86_FEATURE_PCID))
+	if (boot_cpu_has(X86_FEATURE_PCID)) {
+		printk(KERN_INFO "vmx: X86_FEATURE_PCID\n");
 		cr4 |= X86_CR4_PCIDE;
+	}
+		
 	if (boot_cpu_has(X86_FEATURE_OSXSAVE))
 		cr4 |= X86_CR4_OSXSAVE;
 	if (boot_cpu_has(X86_FEATURE_FSGSBASE))
@@ -863,28 +879,28 @@ static void vmx_setup_initial_guest_state(struct dune_config *conf)
 	vmcs_write32(VM_ENTRY_INTR_INFO_FIELD, 0); /* 22.2.1 */
 }
 
-// static void setup_perf_msrs(struct vmx_vcpu *vcpu)
-// {
-// 	int nr_msrs, i;
-// 	struct perf_guest_switch_msr *msrs;
-// 	struct vmx_msr_entry *e;
+static void setup_perf_msrs(struct vmx_vcpu *vcpu)
+{
+	int nr_msrs, i;
+	struct perf_guest_switch_msr *msrs;
+	struct vmx_msr_entry *e;
 
-// 	msrs = perf_guest_get_msrs(&nr_msrs);
+	msrs = perf_guest_get_msrs(&nr_msrs, NULL);
 
-// 	vcpu->msr_autoload.nr = nr_msrs;
+	vcpu->msr_autoload.nr = nr_msrs;
 
-// 	vmcs_write32(VM_EXIT_MSR_LOAD_COUNT, vcpu->msr_autoload.nr);
-// 	vmcs_write32(VM_ENTRY_MSR_LOAD_COUNT, vcpu->msr_autoload.nr);
+	vmcs_write32(VM_EXIT_MSR_LOAD_COUNT, vcpu->msr_autoload.nr);
+	vmcs_write32(VM_ENTRY_MSR_LOAD_COUNT, vcpu->msr_autoload.nr);
 
-// 	for (i = 0; i < nr_msrs; i++) {
-// 		e = &vcpu->msr_autoload.host[i];
-// 		e->index = msrs[i].msr;
-// 		e->value = msrs[i].host;
-// 		e = &vcpu->msr_autoload.guest[i];
-// 		e->index = msrs[i].msr;
-// 		e->value = msrs[i].guest;
-// 	}
-// }
+	for (i = 0; i < nr_msrs; i++) {
+		e = &vcpu->msr_autoload.host[i];
+		e->index = msrs[i].msr;
+		e->value = msrs[i].host;
+		e = &vcpu->msr_autoload.guest[i];
+		e->index = msrs[i].msr;
+		e->value = msrs[i].guest;
+	}
+}
 
 static void __vmx_disable_intercept_for_msr(unsigned long *msr_bitmap, u32 msr)
 {
@@ -1158,9 +1174,14 @@ static void vmx_destroy_vcpu(struct vmx_vcpu *vcpu)
 void vmx_cleanup(void)
 {
 	struct vmx_vcpu *vcpu, *tmp;
-
+	int i;
 	list_for_each_entry_safe (vcpu, tmp, &vcpus, list) {
-		printk(KERN_ERR "vmx: destroying VCPU (VPID %d), exit count %llu\n", vcpu->vpid, vcpu->exit_count);
+		printk(KERN_ERR "vmx: destroying VCPU (VPID %d), ept_table_pages %llu, host_pages %llu\n", vcpu->vpid, vcpu->pgtbl_pages_created, vcpu->host_pages_connected);
+		for (i = 0; i < EXIT_REASON_BUS_LOCK + 1; ++i) {
+			if (vcpu->exit_count[i] > 0)
+				printk(KERN_ERR "vmx: exit reason %d count %llu\n", i,
+					   vcpu->exit_count[i]);
+		}
 		list_del(&vcpu->list);
 		vmx_destroy_vcpu(vcpu);
 	}
@@ -1590,7 +1611,7 @@ int vmx_launch(struct dune_config *conf, int64_t *ret_code)
 	if (!vcpu)
 		return -ENOMEM;
 
-	printk(KERN_ERR "vmx: created VCPU (VPID %d)\n", vcpu->vpid);
+	printk(KERN_ERR "vmx: created VCPU (VPID %d) with ept root %lx\n", vcpu->vpid, vcpu->ept_root);
 
 	while (1) {
 		vmx_get_cpu(vcpu);
@@ -1621,7 +1642,7 @@ int vmx_launch(struct dune_config *conf, int64_t *ret_code)
 			break;
 		}
 
-		//setup_perf_msrs(vcpu);
+		setup_perf_msrs(vcpu);
 
 		ret = vmx_run_vcpu(vcpu);
 
@@ -1639,7 +1660,7 @@ int vmx_launch(struct dune_config *conf, int64_t *ret_code)
 		}
 
 		vmx_put_cpu(vcpu);
-		vcpu->exit_count++;
+		vcpu->exit_count[ret]++;
 		if (ret == EXIT_REASON_VMCALL)
 			vmx_handle_syscall(vcpu);
 		else if (ret == EXIT_REASON_CPUID)
