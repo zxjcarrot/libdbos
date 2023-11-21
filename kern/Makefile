@@ -13,6 +13,7 @@ dune-objs := \
 	core.o \
 	vmx.o \
 	ept.o \
+	apic.o \
 	preempttrap.o
 
 # KSRC should be set to the path to your sources

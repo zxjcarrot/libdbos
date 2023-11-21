@@ -266,6 +266,21 @@ static int setup_syscall(void)
 	return 0;
 }
 
+static int setup_apic_mapping(void)
+{
+	map_ptr((void *) APIC_BASE, 0);
+	return 0;
+}
+
+static int setup_posted_intr_desc_mapping(void)
+{
+	int i;
+	for (i = 0; i < get_nprocs(); i++) {
+		map_ptr((void *) (POSTED_INTR_DESCS_BASE + (i * PAGE_SIZE)), 0);
+	}
+	return 0;
+}
+
 #define VSYSCALL_ADDR 0xffffffffff600000
 
 static void setup_vsyscall(void)
@@ -490,6 +505,7 @@ static int do_dune_enter(struct dune_percpu *percpu)
 		dune_die();
 	}
 
+	dune_apic_init_rt_entry();
 	return 0;
 }
 
@@ -679,6 +695,16 @@ int dune_init(bool map_full)
 		goto err;
 	}
 
+	if ((ret = setup_apic_mapping())) {
+		printf("dune: unable to setup APIC\n");
+		goto err;
+	}
+
+	if ((ret = setup_posted_intr_desc_mapping())) {
+		printf("dune: unable to setup posted interrupt descriptors mappings\n");
+		goto err;
+	}
+
 	// disable signals for now until we have better support
 	for (i = 1; i < 32; i++) {
 		struct sigaction sa;
@@ -702,6 +728,8 @@ int dune_init(bool map_full)
 	}
 
 	setup_idt();
+
+	dune_setup_apic();
 
 	return 0;
 

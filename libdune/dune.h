@@ -115,6 +115,13 @@ extern void dune_ret_from_user(int ret) __attribute__((noreturn));
 extern void dune_dump_trap_frame(struct dune_tf *tf);
 extern void dune_passthrough_syscall(struct dune_tf *tf);
 
+// APIC
+
+extern void dune_setup_apic(void);
+extern void dune_apic_init_rt_entry(void);
+extern void dune_apic_send_posted_ipi(uint8_t vector, uint32_t destination_core);
+extern void dune_apic_eoi(void);
+
 // page allocation
 
 SLIST_HEAD(page_head, page);
@@ -175,6 +182,12 @@ extern uintptr_t phys_limit;
 extern uintptr_t mmap_base;
 extern uintptr_t stack_base;
 
+//TODO: Can I get rid of this constant?
+#define PAGE_SIZE 4096
+
+#define APIC_BASE 0xfffffffffffff000
+#define POSTED_INTR_DESCS_BASE (1ul<<45)
+
 static inline uintptr_t dune_mmap_addr_to_pa(void *ptr)
 {
 	return (((uintptr_t)ptr) - mmap_base)
@@ -188,6 +201,12 @@ static inline uintptr_t dune_stack_addr_to_pa(void *ptr)
 
 static inline uintptr_t dune_va_to_pa(void *ptr)
 {
+	if (PGADDR(ptr) == APIC_BASE)
+		return GPA_APIC_PAGE;
+	if (PGADDR(ptr) >= POSTED_INTR_DESCS_BASE &&
+	    PGADDR(ptr) <  POSTED_INTR_DESCS_BASE + (256 * PAGE_SIZE)) {
+		return GPA_POSTED_INTR_DESCS + (PGADDR(ptr) - POSTED_INTR_DESCS_BASE);
+	}
 	if ((uintptr_t)ptr >= stack_base)
 		return dune_stack_addr_to_pa(ptr);
 	else if ((uintptr_t)ptr >= mmap_base)

@@ -92,6 +92,11 @@ struct dune_trap_config {
 	(((unsigned long)1 << 36) - GPA_STACK_SIZE) /* 63 gigabytes */
 #define LG_ALIGN(addr) ((addr + (1 << 30) - 1) & ~((1 << 30) - 1))
 
+/* FIXME: magic page that maps to APIC of the host */
+#define GPA_APIC_PAGE ((1ul<<46)-4096)
+#define GPA_POSTED_INTR_DESCS (1ul<<45)
+//(1ul<<46)
+
 #endif /* __ASSEMBLY__ */
 
 #define IOCTL_DUNE_ENTER 0x80b0e901

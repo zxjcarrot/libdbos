@@ -21,3 +21,5 @@ extern char __dune_vsyscall_page;
 
 // initialization
 extern int dune_page_init(void);
+void setup_apic(void);
+void apic_init_rt_entry(void);

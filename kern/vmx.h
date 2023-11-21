@@ -18,12 +18,15 @@ struct vmcs {
 };
 
 struct vmx_capability {
+	u64 pin_based;
+	u64 secondary;
 	u32 ept;
 	u32 vpid;
 	int has_load_efer : 1;
 };
 
 extern struct vmx_capability vmx_capability;
+extern void *posted_interrupt_desc_region;
 
 #define NR_AUTOLOAD_MSRS 8
 
@@ -56,11 +59,18 @@ struct vmx_common {
 	unsigned long eptp;
 	bool ept_ad_enabled;
 };
+
+enum vmx_mode {
+	IN_GUEST_MODE,
+	IN_HOST_MODE
+};
+
 struct vmx_vcpu {
 	struct list_head list;
 	int cpu;
 	int vpid;
 	int launched;
+	enum vmx_mode mode;
 
 	struct mmu_notifier mmu_notifier;
 	spinlock_t ept_lock;
@@ -78,7 +88,7 @@ struct vmx_vcpu {
 	u64 host_pages_connected;
 	int shutdown;
 	int ret_code;
-	u64 exit_count[EXIT_REASON_BUS_LOCK + 1];
+	u64 exit_count[EXIT_REASON_NOTIFY + 1];
 	struct msr_autoload {
 		unsigned nr;
 		struct vmx_msr_entry guest[NR_AUTOLOAD_MSRS];
@@ -89,6 +99,7 @@ struct vmx_vcpu {
 	void *syscall_tbl;
 	struct dune_config *conf;
 	unsigned long guest_kernel_gs_base;
+	void *idt_base;
 };
 
 extern __init int vmx_init(void);
