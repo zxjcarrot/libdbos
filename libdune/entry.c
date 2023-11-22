@@ -519,7 +519,7 @@ void on_dune_exit(struct dune_config *conf)
 {
 	//dune_dump_config(conf);
 	if (conf->ret != DUNE_RET_EXIT) {
-		printf("on_dune_exit: tid: %d, ret %lld\n", gettid(), conf->ret);
+		//printf("on_dune_exit: tid: %d, ret %lld\n", gettid(), conf->ret);
 	}
 	switch (conf->ret) {
 	case DUNE_RET_EXIT:

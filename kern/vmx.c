@@ -55,9 +55,10 @@
 #include <asm/desc.h>
 #include <asm/vmx.h>
 #include <asm/unistd_64.h>
-#include <asm/virtext.h>
+//#include <asm/virtext.h>
+#include <asm/cpufeature.h>
+#include <asm/cpufeatures.h>
 #include <asm/traps.h>
-
 #include "dune.h"
 #include "vmx.h"
 #include "compat.h"
@@ -1761,6 +1762,24 @@ static void vmx_disable(void *unused)
 	}
 }
 
+// static bool is_vmx_supported(void)
+// {
+// 	int cpu = smp_processor_id();
+
+// 	if (!(cpuid_ecx(1) & feature_bit(VMX))) {
+// 		pr_err("VMX not supported by CPU %d\n", cpu);
+// 		return false;
+// 	}
+
+// 	if (!this_cpu_has(X86_FEATURE_MSR_IA32_FEAT_CTL) ||
+// 	    !this_cpu_has(X86_FEATURE_VMX)) {
+// 		pr_err("VMX not enabled (by BIOS) in MSR_IA32_FEAT_CTL on CPU %d\n", cpu);
+// 		return false;
+// 	}
+
+// 	return true;
+// }
+
 /**
  * vmx_free_vmxon_areas - cleanup helper function to free all VMXON buffers
  */
@@ -1783,10 +1802,10 @@ __init int vmx_init(void)
 {
 	int r, cpu;
 
-	if (!cpu_has_vmx()) {
-		printk(KERN_ERR "vmx: CPU does not support VT-x\n");
-		return -EIO;
-	}
+	// if (!is_vmx_supported()) {
+	// 	printk(KERN_ERR "vmx: CPU does not support VT-x\n");
+	// 	return -EIO;
+	// }
 
 	vmx_init_syscall();
 

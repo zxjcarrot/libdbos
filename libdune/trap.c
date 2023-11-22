@@ -100,20 +100,6 @@ static void dump_ip(struct dune_tf *tf)
 	dune_hexdump(p, len);
 }
 
-#include <execinfo.h>
-#include <signal.h>
-#include <stdlib.h>
-#include <unistd.h>
-void dump_stack_trace() {
-  void* callstack[128];
-  int i, frames = backtrace(callstack, 128);
-  char** strs = backtrace_symbols(callstack, frames);
-  for (i = 0; i < frames; ++i) {
-	dune_printf("%s\n", strs[i]);
-  }
-  free(strs);
-}
-
 static uint64_t search_rip;
 void dune_procmap_find_mapping(const struct dune_procmap_entry * e) {
 	if (e->begin <= search_rip && search_rip <= e->end) {
@@ -145,7 +131,6 @@ void dune_dump_trap_frame(struct dune_tf *tf)
 	dune_dump_stack(tf);
 	dump_ip(tf);
 	dune_printf("dune: --- End Trap Dump ---\n");
-	//dump_stack_trace();
 }
 
 void dune_syscall_handler(struct dune_tf *tf)

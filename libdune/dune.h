@@ -233,7 +233,7 @@ static inline void dune_flush_tlb(void)
 
 static inline void load_cr3(unsigned long cr3)
 {
-	printf("load cr3 %lx\n", cr3);
+	//printf("load cr3 %lx\n", cr3);
 	asm("mov %%rax, %%cr3\n" : : "a"(cr3));
 }
 
