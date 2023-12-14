@@ -1,15 +1,18 @@
 CC	:= gcc
-CFLAGS	:= -Wall -g -MD -O0  -fno-pie -I ../ -mincoming-stack-boundary=3
+CFLAGS	:= -Wall -g3 -MD -O0  -fno-pie -I ../ -mincoming-stack-boundary=3
 LDFLAGS := -lpthread -ldune 
 MODULE_LIB := /lib/modules/$(shell uname -r)/build
 
-tests_files := hello test timetest test_sandbox  mprotect fork # hugepages hugepages_mod.ko
+tests_files := hello test timetest test_sandbox posted_ipi mprotect fork test_ipi # hugepages hugepages_mod.ko
 
 obj-m += hugepages_mod.o
 
 all: $(tests_files)
 
 hello: hello.o ../libdune/libdune.a
+	$(CC) $(CFLAGS)  $(<) -L../libdune $(LDFLAGS) -o $(@)
+
+test_ipi: test_ipi.o ../libdune/libdune.a
 	$(CC) $(CFLAGS)  $(<) -L../libdune $(LDFLAGS) -o $(@)
 
 mprotect: mprotect.o ../libdune/libdune.a
@@ -24,8 +27,11 @@ timetest: timetest.o ../libdune/libdune.a
 test: test.o ../libdune/libdune.a
 	$(CC) $(CFLAGS)  $(<) -L../libdune $(LDFLAGS) -o $(@)
 
+posted_ipi: posted_ipi.o
+	$(CC) $(CFLAGS) $(<) -L../libdune $(LDFLAGS) -o $(@)
+
 test_sandbox: test_sandbox.o
-	$(CC) $(CFLAGS) -static $(<) -pthread -o $(@)
+	$(CC) $(CFLAGS) $(<) -L../libdune $(LDFLAGS) -o $(@)
 
 hugepages: hugepages.o ../libdune/libdune.a
 	$(CC) $(CFLAGS) -static $(<) -L../libdune $(LDFLAGS) -o $(@)

@@ -672,7 +672,7 @@ static void __vmx_get_cpu_helper(void *ptr)
  *
  * Disables preemption. Call vmx_put_cpu() when finished.
  */
-static void vmx_get_cpu(struct vmx_vcpu *vcpu)
+void vmx_get_cpu(struct vmx_vcpu *vcpu)
 {
 	int cur_cpu = get_cpu();
 
@@ -705,7 +705,7 @@ static void vmx_get_cpu(struct vmx_vcpu *vcpu)
  * vmx_put_cpu - called after using a cpu
  * @vcpu: VCPU that was loaded.
  */
-static void vmx_put_cpu(struct vmx_vcpu *vcpu)
+void vmx_put_cpu(struct vmx_vcpu *vcpu)
 {
 	rdmsrl(MSR_KERNEL_GS_BASE, vcpu->guest_kernel_gs_base);
 	put_cpu();
@@ -1317,7 +1317,7 @@ void vmx_cleanup(void)
 	struct vmx_vcpu *vcpu, *tmp;
 	int i;
 	list_for_each_entry_safe (vcpu, tmp, &vcpus, list) {
-		printk(KERN_ERR "vmx: destroying VCPU (VPID %d), ept_table_pages %llu, host_pages %llu\n", vcpu->vpid, vcpu->pgtbl_pages_created, vcpu->host_pages_connected);
+		printk(KERN_ERR "vmx: destroying VCPU (VPID %d), ept_table_pages %llu, host_4k_pages %llu, host_huge_pages %llu\n", vcpu->vpid, vcpu->pgtbl_pages_created, vcpu->host_4k_pages_connected, vcpu->host_huge_pages_connected);
 		for (i = 0; i < EXIT_REASON_NOTIFY + 1; ++i) {
 			if (vcpu->exit_count[i] > 0)
 				printk(KERN_ERR "vmx: exit reason %d count %llu\n", i,
@@ -1627,13 +1627,13 @@ static void vmx_handle_syscall(struct vmx_vcpu *vcpu)
 		vrsp = vmcs_readl(GUEST_RSP);
 		vmx_put_cpu(vcpu);
 
-		printk(KERN_INFO "vmx: invalid syscall %llx, arg 1 %llx , arg 2 %llx, arg 3 %llx err %llx vm_rsp %llx \n", 
-						  vcpu->regs[VCPU_REGS_RAX], 
-						  vcpu->regs[VCPU_REGS_RDI], 
-						  vcpu->regs[VCPU_REGS_RSI], 
-						  vcpu->regs[VCPU_REGS_RDX],
-						  vcpu->regs[VCPU_REGS_RCX],
-						  vrsp);
+		// printk(KERN_INFO "vmx: invalid syscall %llx, arg 1 %llx , arg 2 %llx, arg 3 %llx err %llx vm_rsp %llx \n", 
+		// 				  vcpu->regs[VCPU_REGS_RAX], 
+		// 				  vcpu->regs[VCPU_REGS_RDI], 
+		// 				  vcpu->regs[VCPU_REGS_RSI], 
+		// 				  vcpu->regs[VCPU_REGS_RDX],
+		// 				  vcpu->regs[VCPU_REGS_RCX],
+		// 				  vrsp);
 		//vmx_dump_cpu(vcpu);
 		vcpu->regs[VCPU_REGS_RAX] = -EINVAL;
 		return;

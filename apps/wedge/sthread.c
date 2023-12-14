@@ -89,7 +89,7 @@ static void *kmalloc(int sz)
 	return x;
 }
 
-static int walk_recycle(const void *arg, ptent_t *ptep, void *va)
+static int walk_recycle(const void *arg, ptent_t *ptep, void *va, int level)
 {
 	struct sthread *s = (void*) arg;
 	unsigned char *pa = &s->st_writable[s->st_walk];
@@ -109,7 +109,7 @@ static int walk_recycle(const void *arg, ptent_t *ptep, void *va)
 	return 0;
 }
 
-static int walk_recycle_stack(const void *arg, ptent_t *ptep, void *va)
+static int walk_recycle_stack(const void *arg, ptent_t *ptep, void *va, int level)
 {
 	struct sthread *s = (void*) arg;
 	unsigned char *pa = (unsigned char*) s->st_stack + s->st_walk;
@@ -234,7 +234,7 @@ static void schedule(struct dune_tf *tf)
 	abort();
 }
 
-static int walk_check_perm(const void *arg, ptent_t *ptep, void *va)
+static int walk_check_perm(const void *arg, ptent_t *ptep, void *va, int level)
 {
 	struct sthread *s = (void*) arg;
 
@@ -547,7 +547,7 @@ static int launch_sthread(struct sthread *s, stcb_t cb, void *arg)
 	return 0;
 }
 
-static int walk_remap(const void *arg, ptent_t *ptep, void *va)
+static int walk_remap(const void *arg, ptent_t *ptep, void *va, int level)
 {
 	struct sthread *s = (void*) arg;
 	unsigned char *pa = &s->st_writable[s->st_walk];
@@ -559,7 +559,7 @@ static int walk_remap(const void *arg, ptent_t *ptep, void *va)
 	return 0;
 }
 
-static int walk_protect(const void *arg, ptent_t *ptep, void *va)
+static int walk_protect(const void *arg, ptent_t *ptep, void *va, int level)
 {
 	struct sthread *s = (void*) arg;
 	struct segment *seg = _segments.s_next;

@@ -78,7 +78,8 @@ static struct perf_guest_info_callbacks dune_guest_cbs = {
 	// .is_user_mode = dune_is_user_mode,
 	// .get_guest_ip = dune_get_guest_ip,
 	.state = dune_is_user_mode,
-	.get_ip = dune_get_guest_ip
+	.get_ip = dune_get_guest_ip,
+	.handle_intel_pt_intr = NULL
 };
 
 static int dune_enter(struct dune_config *conf, int64_t *ret)

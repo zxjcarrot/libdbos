@@ -24,8 +24,8 @@ volatile unsigned long total = 0;
 volatile unsigned long rdtsc_overhead = 0;
 
 static void test_handler(struct dune_tf *tf) {
-        unsigned long end = rdtscllp();
-        total += end - start - rdtsc_overhead;
+	unsigned long end = rdtscllp();
+	total += end - start - rdtsc_overhead;
 	dune_apic_eoi();
 	wait = false;
 }

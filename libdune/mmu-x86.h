@@ -58,6 +58,8 @@
 
 /* DUNE Specific Flags - Using available bits in PTE */
 #define PTE_COW	 0x0200 /* Copy-on-write - must also be read-only */
+#define PTE_STACK	 0x0400 /* stack */
+#define PTE_LOCK 0x800 /* lock bit */
 #define PTE_USR1 UINT64(0x4000000000000000) /* Reserved for user software */
 #define PTE_USR2 UINT64(0x2000000000000000) /* Reserved for user software */
 #define PTE_USR3 UINT64(0x1000000000000000) /* Reserved for user software */

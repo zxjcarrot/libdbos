@@ -331,6 +331,39 @@ static void __setup_mappings_cb(const struct dune_procmap_entry *ent)
 	assert(!ret);
 }
 
+static void __setup_lib_mappings_cb(const struct dune_procmap_entry *ent)
+{
+	int perm = PERM_NONE;
+	int ret;
+
+	// page region already mapped
+	if (ent->begin >= PAGEBASE && ent->end <= PAGEBASE_END)
+		return;
+
+	if (ent->begin == (unsigned long)VSYSCALL_ADDR) {
+		return;
+	}
+
+	if (ent->type == PROCMAP_TYPE_VDSO) {
+		return;
+	}
+
+	if (ent->type == PROCMAP_TYPE_VVAR) {
+		return;
+	}
+
+	if (ent->r)
+		perm |= PERM_R;
+	if (ent->w)
+		perm |= PERM_W;
+	if (ent->x)
+		perm |= PERM_X;
+
+	ret = dune_vm_map_phys(pgroot, (void *)ent->begin, ent->end - ent->begin,
+						   (void *)dune_va_to_pa((void *)ent->begin), perm);
+	assert(!ret);
+}
+
 static int __setup_mappings_precise(struct dune_layout *layout)
 {
 	int ret;
@@ -395,11 +428,13 @@ static int __setup_mappings_full(struct dune_layout *layout)
 						   PERM_R | PERM_W | PERM_BIG);
 	if (ret)
 		return ret;
-	printf("dune: pgbase_v_addr %lx pgbase_p_addr %lx, PAGE %lu MiB\n", PAGEBASE, dune_va_to_pa((void *)PAGEBASE), (MAX_PAGES * PGSIZE)/1024/1024);
+	printf("dune: pgbase_v_addr %lx pgbase_p_addr [%lx,%lx], PAGE %lu MiB\n", PAGEBASE, dune_va_to_pa((void *)PAGEBASE), dune_va_to_pa((void *)PAGEBASE) + (MAX_PAGES * PGSIZE), (MAX_PAGES * PGSIZE)/1024/1024);
 
 	dune_procmap_iterate(setup_vdso_cb);
 	setup_vsyscall();
 
+	// Now iterate through process mappings to handle shared libraries
+	dune_procmap_iterate(&__setup_lib_mappings_cb);
 	return 0;
 }
 
@@ -465,8 +500,15 @@ static void map_stack_cb(const struct dune_procmap_entry *e)
 	asm("mov %%rsp, %0" : "=r"(esp));
 
 	if (esp >= e->begin && esp < e->end) {
-		map_ptr((void *)e->begin, e->end - e->begin);
-		//printf("mapped stack [%lx-%lx]\n", (uintptr_t)e->begin, (uintptr_t)e->end);
+		void *p = (void *)e->begin;
+		int len = e->end - e->begin;
+		unsigned long page = PGADDR(p);
+		unsigned long page_end = PGADDR((char *)p + len);
+		unsigned long l = (page_end - page);
+		void *pg = (void *)page;
+
+		dune_vm_map_phys(pgroot, pg, l, (void *)dune_va_to_pa(pg), PERM_R | PERM_X | PERM_W | PERM_USR4);
+		printf("mapped stack [%lx-%lx], page %p, page_end %p, l %lu\n", (uintptr_t)e->begin, (uintptr_t)e->end, page, page_end, l);
 	}
 }
 
@@ -553,6 +595,7 @@ void on_dune_exit(struct dune_config *conf)
 		break;
 	case DUNE_RET_UNHANDLED_VMEXIT:
 		printf("dune: exit due to unhandled VM exit\n");
+		dune_procmap_dump();
 		break;
 	case DUNE_RET_NOENTER:
 		printf("dune: re-entry to Dune mode failed, status is %lld\n",
@@ -739,4 +782,13 @@ fail_pgroot:
 	close(dune_fd);
 fail_open:
 	return ret;
+}
+
+int dune_init_with_ipi(bool map_full) {
+	int ret;
+	if ((ret = dune_init(map_full))) {
+		return ret;
+	}
+
+	return dune_ipi_init();
 }

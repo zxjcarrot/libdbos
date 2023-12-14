@@ -9,6 +9,7 @@
 static char *mem;
 unsigned long trap_tsc, overhead;
 unsigned long time = 0;
+unsigned long s = 0;
 static void prime_memory(void)
 {
 	int i;
@@ -35,12 +36,57 @@ static void benchmark1_handler(uintptr_t addr, uint64_t fec, struct dune_tf *tf)
 		dune_flush_tlb_one(addr + NRPGS * PGSIZE);
 }
 
+
+static void make_writable_handler(uintptr_t addr, uint64_t fec, struct dune_tf *tf)
+{
+	ptent_t *pte;
+	int accessed;
+
+	dune_vm_lookup(pgroot, (void *)addr, 0, &pte);
+	*pte |= PTE_P | PTE_W | PTE_U | PTE_A | PTE_D;
+}
+
+static void make_writable_and_allocate_handler(uintptr_t addr, uint64_t fec, struct dune_tf *tf)
+{
+	ptent_t *pte;
+	int accessed;
+
+
+	dune_vm_lookup(pgroot, (void *)addr, 0, &pte);
+	volatile char *p = dune_alloc_page_internal();
+	*pte |= PTE_P | PTE_W | PTE_U | PTE_A | PTE_D;// | PTE_ADDR(p);
+	s += (uint64_t)p;
+}
+
+static void make_writable_and_allocate_zeroed_handler(uintptr_t addr, uint64_t fec, struct dune_tf *tf)
+{
+	ptent_t *pte;
+
+	dune_vm_lookup(pgroot, (void *)addr, 0, &pte);
+	*pte |= PTE_P | PTE_W | PTE_U | PTE_A | PTE_D;
+	volatile char *p = dune_alloc_page_internal();
+	//*pte = PTE_P | PTE_W | PTE_U | PTE_A | PTE_D | PTE_ADDR(p);
+	memset(p, 0, PGSIZE);
+	//memcpy(p, (void*)PGADDR(addr), PGSIZE);
+	s += (uint64_t)p[8];
+}
+
+
 static void benchmark1(void)
 {
 	int i;
 
 	for (i = 0; i < NRPGS; i++) {
 		trap_tsc = dune_get_ticks();
+		mem[i * PGSIZE] = i;
+	}
+}
+
+static void benchmark3(void)
+{
+	int i;
+
+	for (i = 0; i < NRPGS; i++) {
 		mem[i * PGSIZE] = i;
 	}
 }
@@ -145,6 +191,69 @@ static void benchmark_appel1(void)
 	dune_printf("PROT1,TRAP,UNPROT took %ld cycles\n", avg_appel1 / N);
 }
 
+static void benchmark_cow_clear_wp(void)
+{
+	int i;
+	unsigned long tsc, avg_user_fault = 0;
+
+	dune_register_pgflt_handler(make_writable_handler);
+
+	for (i = 0; i < N; i++) {
+		dune_vm_mprotect(pgroot, (void *)MAP_ADDR, PGSIZE * NRPGS, PERM_R);
+
+		synch_tsc();
+		unsigned long start = dune_get_ticks();
+		benchmark3();
+		unsigned long end = dune_get_ticks();
+
+		avg_user_fault += (end - start);
+	}
+
+	dune_printf("Clear-wp fault took %ld cycles\n", avg_user_fault / (N * NRPGS));
+}
+
+static void benchmark_cow_clear_alloc(void)
+{
+	int i;
+	unsigned long tsc, avg_user_fault = 0;
+
+	dune_register_pgflt_handler(make_writable_and_allocate_handler);
+
+	for (i = 0; i < N; i++) {
+		dune_vm_mprotect(pgroot, (void *)MAP_ADDR, PGSIZE * NRPGS, PERM_R);
+
+		synch_tsc();
+		unsigned long start = dune_get_ticks();
+		benchmark3();
+		unsigned long end = dune_get_ticks();
+
+		avg_user_fault += (end - start);
+	}
+
+	dune_printf("Clear-wp and allocation fault took %ld cycles\n", avg_user_fault / (N * NRPGS));
+}
+
+static void benchmark_cow_clear_alloc_zero(void)
+{
+	int i;
+	unsigned long tsc, avg_user_fault = 0;
+
+	dune_register_pgflt_handler(make_writable_and_allocate_zeroed_handler);
+
+	for (i = 0; i < N; i++) {
+		dune_vm_mprotect(pgroot, (void *)MAP_ADDR, PGSIZE * NRPGS, PERM_R);
+
+		synch_tsc();
+		unsigned long start = dune_get_ticks();
+		benchmark3();
+		unsigned long end = dune_get_ticks();
+		avg_user_fault += (end - start);
+	}
+
+	dune_printf("Clear-wp and allocation zero fault took %ld cycles\n", avg_user_fault / (N * NRPGS));
+}
+
+
 static void benchmark_appel2(void)
 {
 	int i;
@@ -197,5 +306,9 @@ int main(int argc, char *argv[])
 	benchmark_appel1();
 	benchmark_appel2();
 
+	benchmark_cow_clear_wp();
+	benchmark_cow_clear_alloc_zero();
+	benchmark_cow_clear_alloc();
+	printf("s %lu\n", s);
 	return 0;
 }

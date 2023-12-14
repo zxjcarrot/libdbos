@@ -85,7 +85,8 @@ struct vmx_vcpu {
 	u64 cr2;
 	u64 pgflt_count;
 	u64 pgtbl_pages_created;
-	u64 host_pages_connected;
+	u64 host_4k_pages_connected;
+	u64 host_huge_pages_connected;
 	int shutdown;
 	int ret_code;
 	u64 exit_count[EXIT_REASON_NOTIFY + 1];
@@ -117,7 +118,8 @@ extern int vmx_do_ept_fault(struct vmx_vcpu *vcpu, unsigned long gpa,
 
 extern void vmx_ept_sync_vcpu(struct vmx_vcpu *vcpu);
 extern void vmx_ept_sync_individual_addr(struct vmx_vcpu *vcpu, gpa_t gpa);
-
+extern void vmx_get_cpu(struct vmx_vcpu *vcpu);
+extern void vmx_put_cpu(struct vmx_vcpu *vcpu);
 static __always_inline unsigned long vmcs_readl(unsigned long field)
 {
 	unsigned long value;

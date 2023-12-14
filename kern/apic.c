@@ -123,7 +123,9 @@ static inline void x2apic_wrmsr_fence(void)
 
 
 u32 apic_id(void) {
-	return read_apic_id();
+	//return read_apic_id();
+	unsigned int reg = native_apic_mem_read(APIC_ID);
+	return (reg >> 24) & 0xFF;
 }
 
 void apic_init(void) {

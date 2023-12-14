@@ -56,7 +56,7 @@ static inline uint32_t apic_read(uint32_t reg)
 
 uint32_t dune_apic_id() {
     uint32_t apic_id = apic_read(0x20);
-    printf("raw apic_id 0x%x\n", apic_id);
+    //printf("raw apic_id 0x%x\n", apic_id);
     apic_id >>= 24;
     apic_id &= 0xFF;
     return apic_id;
@@ -75,7 +75,7 @@ void dune_apic_init_rt_entry() {
     syscall(SYS_getcpu, &core_id, &numa_node, NULL);
     apic_routing[core_id] = dune_apic_id();
     asm("mfence" ::: "memory");
-    printf("dune_apic_init_rt_entry core_id %u set to apic_id %u\n", core_id, apic_routing[core_id]);
+    dune_printf("dune_apic_init_rt_entry core_id %u set to apic_id %u\n", core_id, apic_routing[core_id]);
 }
 
 uint32_t dune_apic_id_for_cpu(uint32_t cpu, bool *error) {
@@ -98,7 +98,9 @@ static inline int __prepare_ICR2(unsigned int mask)
 
 static inline void __xapic_wait_icr_idle(void)
 {
-	while (apic_read(APIC_ICR) & APIC_ICR_BUSY);
+	while (apic_read(APIC_ICR) & APIC_ICR_BUSY) {
+        asm volatile("pause");
+    }
 }
 
 static inline void __default_send_IPI_dest_field(unsigned int mask, int vector, unsigned int dest)
@@ -175,6 +177,10 @@ void dune_apic_send_posted_ipi(u8 vector, u32 destination_core) {
     //now send the posted interrupt vector to the destination
     bool error = false;
     u32 destination_apic_id = dune_apic_id_for_cpu(destination_core, &error);
-    if (error) return;
+    if (error) {
+        printf("dune_apic_send_posted_ipi error for destination_core %u\n", destination_core);
+        return;
+    }
     apic_send_ipi(destination_apic_id, POSTED_INTR_VECTOR);
+    //printf("dune_apic_send_posted_ipi vector %d sent to destination_core %u through apic %u\n", vector, destination_core, destination_apic_id);
 }

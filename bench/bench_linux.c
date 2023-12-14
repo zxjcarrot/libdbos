@@ -77,13 +77,60 @@ static void benchmark_syscall(void)
 	printf("System call took %ld cycles\n", (rdtscllp() - t0 - overhead) / N);
 }
 
+void benchmark_fork_fault(void)
+{
+	int i;
+	unsigned long ticks;
+	
+	size_t npages = 10000;
+	char *fm = mmap(NULL, npages * PGSIZE, PROT_READ | PROT_WRITE,
+					MAP_PRIVATE | MAP_ANONYMOUS, 0, 0);
+	if (fm == MAP_FAILED) {
+		perror("mmap failed");
+	}
+	measure_tsc_overhead_n(npages);
+	madvise(fm, npages * PGSIZE, MADV_NOHUGEPAGE);
+	
+	synch_tsc();
+	ticks = rdtscll();
+	for (i = 0; i < npages; i++) {
+		fm[i * PGSIZE] = i;
+	}
+	printf("Kernel page fault (with allocation) took %ld cycles\n",
+		   (rdtscllp() - ticks - overhead) / npages);
+
+	int pid = fork(); // write-protect pages
+	if (pid == 0) {
+		return 0;
+	}
+
+	if (pid < 0) {
+        perror("fork failed");
+        return;
+    } else if (pid == 0) { // Child process
+        exit(0);
+    } else { // Parent process
+        wait(NULL); // Wait for child to exit
+    }
+	synch_tsc();
+	ticks = rdtscll();
+
+	for (i = 0; i < npages; i++) {
+		fm[i * PGSIZE] = i;
+	}
+
+	printf("Kernel write-protection fault took %ld cycles\n",
+		   (rdtscllp() - ticks - overhead) / npages);
+}
+
+
 void benchmark_fault(void)
 {
 	int i;
 	unsigned long ticks;
 	char *fm = mmap(NULL, N * PGSIZE, PROT_READ | PROT_WRITE,
 					MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-
+	madvise(fm, N * PGSIZE, MADV_NOHUGEPAGE);
 	synch_tsc();
 	ticks = rdtscll();
 	for (i = 0; i < N; i++) {
@@ -154,7 +201,9 @@ int main(int argc, char *argv[])
 	printf("Benchmarking Linux performance...\n");
 
 	benchmark_syscall();
-	benchmark_fault();
+	benchmark_fork_fault();
+	
+	//benchmark_fault();
 
 	mem = mmap(NULL, NRPGS * PGSIZE * 2, PROT_READ | PROT_WRITE,
 			   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -163,8 +212,8 @@ int main(int argc, char *argv[])
 		return -1;
 
 	prime_memory();
-	benchmark_appel1();
-	benchmark_appel2();
+	//benchmark_appel1();
+	//benchmark_appel2();
 
 	return 0;
 }

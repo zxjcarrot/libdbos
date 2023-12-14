@@ -471,13 +471,13 @@ static int ept_set_pfnmap_epte(struct vmx_vcpu *vcpu, int make_write,
 	unsigned long vm_io_or_pfnmap = 0;
 
 	if ((gpa & PAGE_MASK) == GPA_APIC_PAGE) {
-		printk(KERN_INFO "vcpu %d mapped APIC_PAGE gpa %lx", vcpu->vpid, GPA_APIC_PAGE);
+		//printk(KERN_INFO "vcpu %d mapped APIC_PAGE gpa %lx", vcpu->vpid, GPA_APIC_PAGE);
 		return ept_map_apic_page(vcpu, make_write, gpa);
 	}
 
 	if ((gpa & PAGE_MASK) >= GPA_POSTED_INTR_DESCS &&
             (gpa & PAGE_MASK) <  GPA_POSTED_INTR_DESCS + (PAGE_SIZE * num_possible_cpus())) {
-		printk(KERN_INFO "vcpu %d mapped pi intr desc page gpa %lx", vcpu->vpid, GPA_APIC_PAGE);
+		//printk(KERN_INFO "vcpu %d mapped pi intr desc page gpa %lx", vcpu->vpid, GPA_APIC_PAGE);
 		return ept_map_posted_intr_desc_page(vcpu, make_write, gpa);
 	}
 
@@ -545,13 +545,15 @@ static int ept_set_pfnmap_epte(struct vmx_vcpu *vcpu, int make_write,
 }
 
 static int ept_set_epte(struct vmx_vcpu *vcpu, int make_write, unsigned long gva,
-						unsigned long gpa, unsigned long hva)
+						unsigned long gpa, unsigned long hva, int fault_flags)
 {
 	int ret;
 	epte_t *epte, flags;
 	struct page *page;
 	unsigned huge_shift;
 	int level;
+	unsigned long grip = 0;
+	int was_present = 0;
 
 	// Pages will be faulted in here if not backed by any physical memory.
 	ret = get_user_pages_fast(hva, 1, make_write, &page);
@@ -580,6 +582,7 @@ static int ept_set_epte(struct vmx_vcpu *vcpu, int make_write, unsigned long gva
 	}
 
 	if (epte_present(*epte)) {
+		was_present = true;
 		if (!epte_big(*epte) && level == 2)
 			ept_clear_l2_epte(epte);
 		else if (!epte_big(*epte) && level == 1)
@@ -605,13 +608,18 @@ static int ept_set_epte(struct vmx_vcpu *vcpu, int make_write, unsigned long gva
 		put_page(tmp);
 
 		flags |= __EPTE_SZ;
-
-		printk(KERN_INFO "ept: %lluth ept fault, GVA: 0x%lx, GPA: 0x%lx, HVA: 0x%lx, HPA: 0x%llx large page level %d\n", vcpu->pgflt_count, gva, gpa,
-			 hva, page_to_phys(page), level);
+		//vmx_get_cpu(vcpu);
+		grip = vmcs_readl(GUEST_RIP);
+		//vmx_put_cpu(vcpu);
+		// printk(KERN_INFO "ept: vcpu %d, %lluth ept fault, make_write %d, GVA: 0x%lx, GPA: 0x%lx, HVA: 0x%lx, HPA: 0x%lx, GUEST_RIP %lx, was_present %d, fault_flags %lx, large page level %d\n", vcpu->vpid,  vcpu->pgflt_count,  make_write, gva, gpa,
+		//  	 hva, page_to_phys(page), grip, was_present, fault_flags, level);
+		vcpu->host_huge_pages_connected += 1;
+	} else {
+		vcpu->host_4k_pages_connected += 1;
 	}
 
 	*epte = epte_addr(page_to_phys(page)) | flags;
-	vcpu->host_pages_connected += 1;
+	
 	spin_unlock(&vcpu->ept_lock);
 
 	// if (++vcpu->pgflt_count < 1000) {
@@ -639,7 +647,7 @@ int vmx_do_ept_fault(struct vmx_vcpu *vcpu, unsigned long gpa,
 
 	// TODO: do we need to check if the user has write permissions to this page
 	// before mapping it into the EPT? Investigate the security of this.
-	ret = ept_set_epte(vcpu, make_write, gva, gpa, hva);
+	ret = ept_set_epte(vcpu, make_write, gva, gpa, hva, fault_flags);
 
 	return ret;
 }

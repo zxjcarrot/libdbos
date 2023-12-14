@@ -24,7 +24,7 @@ int dune_register_intr_handler(int vec, dune_intr_cb cb)
 {
 	if (vec >= IDT_ENTRIES || vec < 0)
 		return -EINVAL;
-
+	printf("modify %p vec %d to %p\n", intr_cbs, vec, cb);
 	intr_cbs[vec] = cb;
 	return 0;
 }
@@ -158,6 +158,7 @@ void dune_trap_handler(int num, struct dune_tf *tf)
 	// 			 "movq %%rax, %0\n\t"
 	// 			 : "=r"((unsigned long)ret)
 	// 			 :"r"((unsigned long) num), "r"((unsigned long) tf->rip), "r"((unsigned long)tf->rsp), "r"((unsigned long)tf->err): "rax", "rdi", "rsi", "rdx", "rcx");
+	//dune_printf("trap %d\n", num);
 	if (intr_cbs[num]) {
 		intr_cbs[num](tf);
 		return;

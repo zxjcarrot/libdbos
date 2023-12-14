@@ -10,6 +10,8 @@
 #include "mmu.h"
 #include "elf.h"
 #include "fpu.h"
+#include "cpu.h"
+#include "ipi_call.h"
 #include "../kern/dune.h"
 
 typedef void (*sighandler_t)(int);
@@ -115,6 +117,7 @@ extern void dune_ret_from_user(int ret) __attribute__((noreturn));
 extern void dune_dump_trap_frame(struct dune_tf *tf);
 extern void dune_passthrough_syscall(struct dune_tf *tf);
 
+extern void *dune_alloc_page_internal(void);
 // APIC
 
 extern void dune_setup_apic(void);
@@ -128,53 +131,33 @@ SLIST_HEAD(page_head, page);
 typedef SLIST_ENTRY(page) page_entry_t;
 
 struct page {
-	page_entry_t link;
+	union {
+		page_entry_t link;
+		uint64_t lock_word;
+	};
 	uint64_t ref;
 };
 
-extern struct page *pages;
-extern int num_pages;
-
 #define PAGEBASE  0x200000000
-#define MAX_PAGES (1ul << 20) /* 4 GB of memory */
+#define MAX_PAGES (1ul << 22) /* 4 GB of memory */
+#define PAGEBASE_END  (0x200000000 + (MAX_PAGES * PGSIZE))
 
+extern uintptr_t dune_pmem_alloc_begin();
+extern uintptr_t dune_pmem_alloc_end();
+extern void dune_prefault_pages();
 extern struct page *dune_page_alloc(void);
 extern void dune_page_free(struct page *pg);
 extern void dune_page_stats(void);
 
-static inline struct page *dune_pa2page(physaddr_t pa)
-{
-	return &pages[PPN(pa - PAGEBASE)];
-}
+extern struct page *dune_pa2page(physaddr_t pa);
 
-static inline physaddr_t dune_page2pa(struct page *pg)
-{
-	return PAGEBASE + ((pg - pages) << PGSHIFT);
-}
+extern physaddr_t dune_page2pa(struct page *pg);
 
 extern bool dune_page_isfrompool(physaddr_t pa);
 
-static inline struct page *dune_page_get(struct page *pg)
-{
-	assert(pg >= pages);
-	assert(pg < (pages + num_pages));
+extern struct page *dune_page_get(struct page *pg);
 
-	pg->ref++;
-
-	return pg;
-}
-
-static inline void dune_page_put(struct page *pg)
-{
-	assert(pg >= pages);
-	assert(pg < (pages + num_pages));
-
-	pg->ref--;
-
-	if (!pg->ref)
-		dune_page_free(pg);
-}
-
+extern void dune_page_put(struct page *pg);
 // virtual memory
 
 extern ptent_t *pgroot;
@@ -225,6 +208,7 @@ static inline uintptr_t dune_va_to_pa(void *ptr)
 #define PERM_USR1	 0x1000 /* User flag 1 */
 #define PERM_USR2	 0x2000 /* User flag 2 */
 #define PERM_USR3	 0x3000 /* User flag 3 */
+#define PERM_USR4	 0x4000 /* User flag 4 */
 #define PERM_BIG	 0x0100 /* Use large pages */
 #define PERM_BIG_1GB 0x0200 /* Use large pages (1GB) */
 
@@ -294,12 +278,13 @@ extern ptent_t *dune_vm_clone(ptent_t *root);
 extern void dune_vm_free(ptent_t *root);
 extern void dune_vm_default_pgflt_handler(uintptr_t addr, uint64_t fec);
 
-typedef int (*page_walk_cb)(const void *arg, ptent_t *ptep, void *va);
+typedef int (*page_walk_cb)(const void *arg, ptent_t *ptep, void *va, int level);
 extern int dune_vm_page_walk(ptent_t *root, void *start_va, void *end_va,
 							 page_walk_cb cb, const void *arg);
 
 extern int dune_vm_page_walk_fill(ptent_t *root, void *start_va, void *end_va,
 							 page_walk_cb cb, const void *arg, int create);
+extern ptent_t *dune_vm_clone_custom(ptent_t *root, page_walk_cb cb);
 
 // process memory maps
 
@@ -358,6 +343,8 @@ extern int dune_elf_load_ph(struct dune_elf *elf, Elf64_Phdr *phdr, off_t off);
 
 extern int dune_init(bool map_full);
 extern int dune_enter();
+
+extern int dune_init_with_ipi(bool map_full);
 
 /**
  * dune_init_and_enter - initializes libdune and enters "Dune mode"

@@ -12,6 +12,7 @@
 
 #define THREAD_2_CORE 10
 #define TEST_VECTOR 0xf2
+#define TEST_VECTOR2 0xf3
 
 #define NUM_ITERATIONS 1000000
 
@@ -24,11 +25,13 @@ volatile bool done = false;
 static void test_handler1(struct dune_tf *tf) {
 	dune_apic_eoi();
 	wait1 = false;
+	//dune_printf("test_handler1\n");
 }
 
 static void test_handler2(struct dune_tf *tf) {
 	dune_apic_eoi();
 	wait2 = false;
+	//dune_printf("test_handler2\n");
 }
 
 void *t2_start(void *arg) {
@@ -37,8 +40,8 @@ void *t2_start(void *arg) {
 		printf("posted_ipi: failed to enter dune in thread 2\n");
 		return NULL;
 	}
-        
-	dune_register_intr_handler(TEST_VECTOR, test_handler2);
+    printf("posted_ipi: now printing from dune mode form core %d\n",THREAD_2_CORE);
+	dune_register_intr_handler(TEST_VECTOR2, test_handler2);
 	asm volatile("mfence" ::: "memory");
 	t2_ready = true;
 	while (true) {
@@ -61,10 +64,10 @@ int main(int argc, char *argv[])
 		printf("failed to initialize dune\n");
 		return ret;
 	}
-	printf("posted_ipi: now printing from dune mode\n");
+	
 
 	THREAD_1_CORE = sched_getcpu();
-
+	printf("posted_ipi: now printing from dune mode from core %d\n", THREAD_1_CORE);
 	pthread_t t2;
         pthread_attr_t attr;
         cpu_set_t cpus;
@@ -86,7 +89,7 @@ int main(int argc, char *argv[])
 
 	int i;
 	for (i = 0; i < NUM_ITERATIONS; i++) {
-		dune_apic_send_posted_ipi(TEST_VECTOR, THREAD_2_CORE);
+		dune_apic_send_posted_ipi(TEST_VECTOR2, THREAD_2_CORE);
 		while (wait1);
 		wait1 = true;
 	}

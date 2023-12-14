@@ -33,6 +33,10 @@ static inline void *alloc_page(void)
 	return (void *)dune_page2pa(pg);
 }
 
+void *dune_alloc_page_internal(void) {
+	return alloc_page();
+}
+
 static inline void put_page(void *page)
 {
 	// XXX: Using PA == VA
@@ -50,7 +54,10 @@ int __dune_vm_page_walk(ptent_t *dir, void *start_va, void *end_va,
 	int end_idx = PDX(level, end_va);
 	void *base_va =
 		(void *)((unsigned long)start_va & ~(PDADDR(level + 1, 1) - 1));
-
+	if (level == 3) {
+		//printf("root %p base_va %p start_va %p end_va %p start_idx %d end_idx %d\n", dir, base_va, start_va, end_va, start_idx, end_idx);
+	}
+	
 	assert(level >= 0 && level <= NPTLVLS);
 	assert(end_idx < NPTENTRIES);
 
@@ -59,11 +66,16 @@ int __dune_vm_page_walk(ptent_t *dir, void *start_va, void *end_va,
 		void *cur_va = base_va + PDADDR(level, i);
 		ptent_t *pte = &dir[i];
 		
+		// if (i == 256 && level == 3) {
+		// 	printf("cur_va=%lx, i=%d, lvl=%d\n", cur_va, i, level);
+		// }
 		//printf("dir=%lx, &pte=%lx, i=%d, lvl=%d\n", (uintptr_t)dir, (uintptr_t)pte, i, level);
-
+		// if ((uint64_t)cur_va >= IPI_ADDR_RING_BASE && (uint64_t)cur_va < IPI_ADDR_SHARED_STATE_END) {
+		// 	printf("cur_va=%lx, dir=%lx, &pte=%lx, i=%d, lvl=%d\n", cur_va, (uintptr_t)dir, (uintptr_t)pte, i, level);
+		// }
 		if (level == 0) {
 			if (create == CREATE_NORMAL || *pte) {
-				ret = cb(arg, pte, cur_va);
+				ret = cb(arg, pte, cur_va, level);
 				if (ret)
 					return ret;
 			}
@@ -72,7 +84,7 @@ int __dune_vm_page_walk(ptent_t *dir, void *start_va, void *end_va,
 
 		if (level == 1) {
 			if (create == CREATE_BIG || pte_big(*pte)) {
-				ret = cb(arg, pte, cur_va);
+				ret = cb(arg, pte, cur_va, level);
 				if (ret)
 					return ret;
 				continue;
@@ -81,7 +93,7 @@ int __dune_vm_page_walk(ptent_t *dir, void *start_va, void *end_va,
 
 		if (level == 2) {
 			if (create == CREATE_BIG_1GB || pte_big(*pte)) {
-				ret = cb(arg, pte, cur_va);
+				ret = cb(arg, pte, cur_va, level);
 				if (ret)
 					return ret;
 				continue;
@@ -209,13 +221,15 @@ static inline ptent_t get_pte_perm(int perm)
 		pte_perm |= PTE_USR2;
 	if (perm & PERM_USR3)
 		pte_perm |= PTE_USR3;
+	if (perm & PERM_USR4)
+		pte_perm |= PTE_STACK;
 	if (perm & PERM_BIG || perm & PERM_BIG_1GB)
 		pte_perm |= PTE_PS;
 
 	return pte_perm;
 }
 
-static int __dune_vm_mprotect_helper(const void *arg, ptent_t *pte, void *va)
+static int __dune_vm_mprotect_helper(const void *arg, ptent_t *pte, void *va, int level)
 {
 	ptent_t perm = (ptent_t)arg;
 
@@ -257,7 +271,7 @@ struct map_phys_data {
 	uint64_t pte_count;
 };
 
-static int __dune_vm_map_phys_helper(const void *arg, ptent_t *pte, void *va)
+static int __dune_vm_map_phys_helper(const void *arg, ptent_t *pte, void *va, int level)
 {
 	struct map_phys_data *data = (struct map_phys_data *)arg;
 
@@ -296,7 +310,7 @@ int dune_vm_map_phys(ptent_t *root, void *va, size_t len, void *pa, int perm)
 	return 0;
 }
 
-static int __dune_vm_map_pages_helper(const void *arg, ptent_t *pte, void *va)
+static int __dune_vm_map_pages_helper(const void *arg, ptent_t *pte, void *va, int level)
 {
 	ptent_t perm = (ptent_t)arg;
 	struct page *pg = dune_page_alloc();
@@ -326,7 +340,7 @@ int dune_vm_map_pages(ptent_t *root, void *va, size_t len, int perm)
 	return ret;
 }
 
-static int __dune_vm_clone_helper(const void *arg, ptent_t *pte, void *va)
+static int __dune_vm_clone_helper(const void *arg, ptent_t *pte, void *va, int level)
 {
 	int ret;
 	struct page *pg = dune_pa2page(PTE_ADDR(*pte));
@@ -365,7 +379,28 @@ ptent_t *dune_vm_clone(ptent_t *root)
 	return newRoot;
 }
 
-static int __dune_vm_free_helper(const void *arg, ptent_t *pte, void *va)
+/**
+ * Clone a page root.
+ */
+ptent_t *dune_vm_clone_custom(ptent_t *root, page_walk_cb cb)
+{
+	int ret;
+	ptent_t *newRoot;
+
+	newRoot = alloc_page();
+	memset(newRoot, 0, PGSIZE);
+
+	ret = __dune_vm_page_walk(root, VA_START, VA_END, cb,
+							  newRoot, 3, CREATE_NONE);
+	if (ret < 0) {
+		dune_vm_free(newRoot);
+		return NULL;
+	}
+
+	return newRoot;
+}
+
+static int __dune_vm_free_helper(const void *arg, ptent_t *pte, void *va, int level)
 {
 	struct page *pg = dune_pa2page(PTE_ADDR(*pte));
 
@@ -385,9 +420,9 @@ void dune_vm_free(ptent_t *root)
 {
 	// XXX: Should only need one page walk
 	// XXX: Hacky - Until I fix ref counting
-	/*__dune_vm_page_walk(root, VA_START, VA_END,
+	__dune_vm_page_walk(root, VA_START, VA_END,
 			&__dune_vm_free_helper, NULL,
-			3, CREATE_NONE);*/
+			3, CREATE_NONE);
 
 	__dune_vm_page_walk(root, VA_START, VA_END, &__dune_vm_free_helper, NULL, 2,
 						CREATE_NONE);
