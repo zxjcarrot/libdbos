@@ -54,10 +54,12 @@ enum vmx_reg {
 };
 
 struct vmx_common {
+	//struct mmu_notifier mmu_notifier;
 	spinlock_t ept_lock;
 	unsigned long ept_root;
 	unsigned long eptp;
 	bool ept_ad_enabled;
+	int ref_cnt;
 };
 
 enum vmx_mode {
@@ -67,16 +69,17 @@ enum vmx_mode {
 
 struct vmx_vcpu {
 	struct list_head list;
+	struct vmx_common* vmx_instance;
 	int cpu;
 	int vpid;
 	int launched;
 	enum vmx_mode mode;
 
 	struct mmu_notifier mmu_notifier;
-	spinlock_t ept_lock;
-	unsigned long ept_root;
-	unsigned long eptp;
-	bool ept_ad_enabled;
+	// spinlock_t ept_lock;
+	// unsigned long ept_root;
+	// unsigned long eptp;
+	// bool ept_ad_enabled;
 
 	u8 fail;
 	u64 exit_reason;
@@ -109,9 +112,9 @@ extern void vmx_cleanup(void);
 
 extern int vmx_launch(struct dune_config *conf, int64_t *ret_code);
 
-extern int vmx_init_ept(struct vmx_vcpu *vcpu);
+extern int vmx_init_ept(struct vmx_common *vmx_instance);
 extern int vmx_create_ept(struct vmx_vcpu *vcpu);
-extern void vmx_destroy_ept(struct vmx_vcpu *vcpu);
+extern void vmx_destroy_ept(struct vmx_common *vmx_instance);
 
 extern int vmx_do_ept_fault(struct vmx_vcpu *vcpu, unsigned long gpa,
 							unsigned long gva, int fault_flags);

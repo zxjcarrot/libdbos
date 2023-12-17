@@ -179,7 +179,7 @@ static int ept_lookup_gpa(struct vmx_vcpu *vcpu, void *gpa, int level,
 						  int create, epte_t **epte_out)
 {
 	int i;
-	epte_t *dir = (epte_t *)__va(vcpu->ept_root);
+	epte_t *dir = (epte_t *)__va(vcpu->vmx_instance->ept_root);
 
 	for (i = EPT_LEVELS - 1; i > level; i--) {
 		int idx = ADDR_TO_IDX(gpa, i);
@@ -371,10 +371,10 @@ static int ept_map_apic_page(struct vmx_vcpu *vcpu, int make_write, unsigned lon
 	int ret;
 	epte_t *epte, flags;
 
-	spin_lock(&vcpu->ept_lock);
+	spin_lock(&vcpu->vmx_instance->ept_lock);
 	ret = ept_lookup_gpa(vcpu, (void *) gpa, 0, 1, &epte);
 	if (ret) {
-		spin_unlock(&vcpu->ept_lock);
+		spin_unlock(&vcpu->vmx_instance->ept_lock);
 		printk(KERN_ERR "ept: failed to lookup EPT entry\n");
 		return ret;
 	}
@@ -383,7 +383,7 @@ static int ept_map_apic_page(struct vmx_vcpu *vcpu, int make_write, unsigned lon
 		__EPTE_IPAT | __EPTE_PFNMAP;
 	if (make_write)
 		flags |= __EPTE_WRITE;
-	if (vcpu->ept_ad_enabled) {
+	if (vcpu->vmx_instance->ept_ad_enabled) {
 		/* premark A/D to avoid extra memory references */
 		flags |= __EPTE_A;
 		if (make_write)
@@ -394,7 +394,7 @@ static int ept_map_apic_page(struct vmx_vcpu *vcpu, int make_write, unsigned lon
 		ept_clear_epte(epte);
 
 	*epte = epte_addr(APIC_DEFAULT_PHYS_BASE) | flags;
-	spin_unlock(&vcpu->ept_lock);
+	spin_unlock(&vcpu->vmx_instance->ept_lock);
 
 	return 0;
 }
@@ -405,10 +405,10 @@ static int ept_map_posted_intr_desc_page(struct vmx_vcpu *vcpu, int make_write, 
 	epte_t *epte, flags;
 	long addr;
 
-	spin_lock(&vcpu->ept_lock);
+	spin_lock(&vcpu->vmx_instance->ept_lock);
 	ret = ept_lookup_gpa(vcpu, (void *) gpa, 0, 1, &epte);
 	if (ret) {
-		spin_unlock(&vcpu->ept_lock);
+		spin_unlock(&vcpu->vmx_instance->ept_lock);
 		printk(KERN_ERR "ept: failed to lookup EPT entry\n");
 		return ret;
 	}
@@ -417,7 +417,7 @@ static int ept_map_posted_intr_desc_page(struct vmx_vcpu *vcpu, int make_write, 
 	
 	addr = (long)__pa(posted_interrupt_desc_region) + (gpa - GPA_POSTED_INTR_DESCS);
 	*epte = epte_addr(addr) | flags;
-	spin_unlock(&vcpu->ept_lock);
+	spin_unlock(&vcpu->vmx_instance->ept_lock);
 
 	return 0;
 }
@@ -516,10 +516,10 @@ static int ept_set_pfnmap_epte(struct vmx_vcpu *vcpu, int make_write,
 	up_read(&mm->mmap_sem);
 
 	/* NOTE: pfn's can not be huge pages, which is quite a relief here */
-	spin_lock(&vcpu->ept_lock);
+	spin_lock(&vcpu->vmx_instance->ept_lock);
 	ret = ept_lookup_gpa(vcpu, (void *)gpa, 0, 1, &epte);
 	if (ret) {
-		spin_unlock(&vcpu->ept_lock);
+		spin_unlock(&vcpu->vmx_instance->ept_lock);
 		printk(KERN_ERR "ept: failed to lookup EPT entry\n");
 		return ret;
 	}
@@ -528,7 +528,7 @@ static int ept_set_pfnmap_epte(struct vmx_vcpu *vcpu, int make_write,
 		__EPTE_READ | __EPTE_TYPE(cache_control) | __EPTE_IPAT | __EPTE_PFNMAP;
 	if (make_write)
 		flags |= __EPTE_WRITE;
-	if (vcpu->ept_ad_enabled) {
+	if (vcpu->vmx_instance->ept_ad_enabled) {
 		/* premark A/D to avoid extra memory references */
 		flags |= __EPTE_A;
 		if (make_write)
@@ -539,7 +539,7 @@ static int ept_set_pfnmap_epte(struct vmx_vcpu *vcpu, int make_write,
 		ept_clear_epte(epte);
 
 	*epte = epte_addr(pfn << PAGE_SHIFT) | flags;
-	spin_unlock(&vcpu->ept_lock);
+	spin_unlock(&vcpu->vmx_instance->ept_lock);
 
 	return 0;
 }
@@ -564,7 +564,7 @@ static int ept_set_epte(struct vmx_vcpu *vcpu, int make_write, unsigned long gva
 		return ret;
 	}
 
-	spin_lock(&vcpu->ept_lock);
+	spin_lock(&vcpu->vmx_instance->ept_lock);
 
 	huge_shift = compound_order(compound_head(page)) + PAGE_SHIFT;
 	level = 0;
@@ -575,7 +575,7 @@ static int ept_set_epte(struct vmx_vcpu *vcpu, int make_write, unsigned long gva
 
 	ret = ept_lookup_gpa(vcpu, (void *)gpa, level, 1, &epte);
 	if (ret) {
-		spin_unlock(&vcpu->ept_lock);
+		spin_unlock(&vcpu->vmx_instance->ept_lock);
 		put_page(page);
 		printk(KERN_ERR "ept: failed to lookup EPT entry\n");
 		return ret;
@@ -594,7 +594,7 @@ static int ept_set_epte(struct vmx_vcpu *vcpu, int make_write, unsigned long gva
 	flags = __EPTE_READ | __EPTE_EXEC | __EPTE_TYPE(EPTE_TYPE_WB) | __EPTE_IPAT;
 	if (make_write)
 		flags |= __EPTE_WRITE;
-	if (vcpu->ept_ad_enabled) {
+	if (vcpu->vmx_instance->ept_ad_enabled) {
 		/* premark A/D to avoid extra memory references */
 		flags |= __EPTE_A;
 		if (make_write)
@@ -620,7 +620,7 @@ static int ept_set_epte(struct vmx_vcpu *vcpu, int make_write, unsigned long gva
 
 	*epte = epte_addr(page_to_phys(page)) | flags;
 	
-	spin_unlock(&vcpu->ept_lock);
+	spin_unlock(&vcpu->vmx_instance->ept_lock);
 
 	// if (++vcpu->pgflt_count < 1000) {
 	// 	printk(KERN_INFO "ept: %lluth ept fault, GVA: 0x%lx, GPA: 0x%lx, HVA: 0x%lx, HPA: 0x%llx\n", vcpu->pgflt_count, gva, gpa,
@@ -672,15 +672,15 @@ static int ept_invalidate_page(struct vmx_vcpu *vcpu, struct mm_struct *mm,
 		return 0;
 	}
 
-	spin_lock(&vcpu->ept_lock);
+	spin_lock(&vcpu->vmx_instance->ept_lock);
 	ret = ept_lookup_gpa(vcpu, (void *)gpa, 0, 0, &epte);
 	if (ret) {
-		spin_unlock(&vcpu->ept_lock);
+		spin_unlock(&vcpu->vmx_instance->ept_lock);
 		return 0;
 	}
 
 	ret = ept_clear_epte(epte);
-	spin_unlock(&vcpu->ept_lock);
+	spin_unlock(&vcpu->vmx_instance->ept_lock);
 
 	if (ret)
 		vmx_ept_sync_individual_addr(vcpu, (gpa_t)gpa);
@@ -708,9 +708,9 @@ static int ept_check_page_mapped(struct vmx_vcpu *vcpu, struct mm_struct *mm,
 		return 0;
 	}
 
-	spin_lock(&vcpu->ept_lock);
+	spin_lock(&vcpu->vmx_instance->ept_lock);
 	ret = ept_lookup_gpa(vcpu, (void *)gpa, 0, 0, &epte);
-	spin_unlock(&vcpu->ept_lock);
+	spin_unlock(&vcpu->vmx_instance->ept_lock);
 
 	return !ret;
 }
@@ -736,17 +736,17 @@ static int ept_check_page_accessed(struct vmx_vcpu *vcpu, struct mm_struct *mm,
 		return 0;
 	}
 
-	spin_lock(&vcpu->ept_lock);
+	spin_lock(&vcpu->vmx_instance->ept_lock);
 	ret = ept_lookup_gpa(vcpu, (void *)gpa, 0, 0, &epte);
 	if (ret) {
-		spin_unlock(&vcpu->ept_lock);
+		spin_unlock(&vcpu->vmx_instance->ept_lock);
 		return 0;
 	}
 
 	accessed = (*epte & __EPTE_A);
 	if (flush & accessed)
 		*epte = (*epte & ~__EPTE_A);
-	spin_unlock(&vcpu->ept_lock);
+	spin_unlock(&vcpu->vmx_instance->ept_lock);
 
 	if (flush & accessed)
 		vmx_ept_sync_individual_addr(vcpu, (gpa_t)gpa);
@@ -795,7 +795,7 @@ static void ept_mmu_notifier_invalidate_range_start(struct mmu_notifier *mn,
 
 	pr_debug("ept: invalidate_range_start start %lx end %lx\n", start, end);
 
-	spin_lock(&vcpu->ept_lock);
+	spin_lock(&vcpu->vmx_instance->ept_lock);
 	while (pos < end) {
 		ret = ept_lookup(vcpu, mm, (void *)pos, 0, 0, &epte);
 		if (!ret) {
@@ -805,7 +805,7 @@ static void ept_mmu_notifier_invalidate_range_start(struct mmu_notifier *mn,
 		} else
 			pos += PAGE_SIZE;
 	}
-	spin_unlock(&vcpu->ept_lock);
+	spin_unlock(&vcpu->vmx_instance->ept_lock);
 
 	if (sync_needed)
 		vmx_ept_sync_vcpu(vcpu);
@@ -854,7 +854,7 @@ static int ept_mmu_notifier_clear_flush_young(struct mmu_notifier *mn,
 
 	pr_debug("ept: clear_flush_young start %lx end %lx\n", start, end);
 
-	if (!vcpu->ept_ad_enabled) {
+	if (!vcpu->vmx_instance->ept_ad_enabled) {
 		for (; start < end; start += PAGE_SIZE)
 			ret |= ept_invalidate_page(vcpu, mm, start);
 	} else {
@@ -873,7 +873,7 @@ static int ept_mmu_notifier_clear_flush_young(struct mmu_notifier *mn,
 
 	pr_debug("ept: clear_flush_young addr %lx\n", address);
 
-	if (!vcpu->ept_ad_enabled)
+	if (!vcpu->vmx_instance->ept_ad_enabled)
 		return ept_invalidate_page(vcpu, mm, address);
 	else
 		return ept_check_page_accessed(vcpu, mm, address, true);
@@ -888,7 +888,7 @@ static int ept_mmu_notifier_test_young(struct mmu_notifier *mn,
 
 	pr_debug("ept: test_young addr %lx\n", address);
 
-	if (!vcpu->ept_ad_enabled)
+	if (!vcpu->vmx_instance->ept_ad_enabled)
 		return ept_check_page_mapped(vcpu, mm, address);
 	else
 		return ept_check_page_accessed(vcpu, mm, address, false);
@@ -911,7 +911,7 @@ static const struct mmu_notifier_ops ept_mmu_notifier_ops = {
 	.release = ept_mmu_notifier_release,
 };
 
-int vmx_init_ept(struct vmx_vcpu *vcpu)
+int vmx_init_ept(struct vmx_common *vmx_instance)
 {
 	void *page = (void *)__get_free_page(GFP_KERNEL);
 
@@ -919,7 +919,7 @@ int vmx_init_ept(struct vmx_vcpu *vcpu)
 		return -ENOMEM;
 
 	memset(page, 0, PAGE_SIZE);
-	vcpu->ept_root = __pa(page);
+	vmx_instance->ept_root = __pa(page);
 
 	return 0;
 }
@@ -936,14 +936,12 @@ int vmx_create_ept(struct vmx_vcpu *vcpu)
 	return 0;
 
 fail:
-	vmx_free_ept(vcpu->ept_root);
+	// vmx_free_ept(vmx_instance->ept_root);
 
 	return ret;
 }
 
-void vmx_destroy_ept(struct vmx_vcpu *vcpu)
+void vmx_destroy_ept(struct vmx_common *vmx_instance)
 {
-	if (current->mm)
-		mmu_notifier_unregister(&vcpu->mmu_notifier, current->mm);
-	vmx_free_ept(vcpu->ept_root);
+	vmx_free_ept(vmx_instance->ept_root);
 }

@@ -595,7 +595,7 @@ void on_dune_exit(struct dune_config *conf)
 		break;
 	case DUNE_RET_UNHANDLED_VMEXIT:
 		printf("dune: exit due to unhandled VM exit\n");
-		dune_procmap_dump();
+		//dune_procmap_dump();
 		break;
 	case DUNE_RET_NOENTER:
 		printf("dune: re-entry to Dune mode failed, status is %lld\n",

@@ -66,6 +66,8 @@
 
 static atomic_t vmx_enable_failed;
 
+static struct vmx_common * vmx_instance = NULL;
+
 static DECLARE_BITMAP(vmx_vpid_bitmap, VMX_NR_VPIDS);
 static DEFINE_SPINLOCK(vmx_vpid_lock);
 
@@ -689,7 +691,7 @@ void vmx_get_cpu(struct vmx_vcpu *vcpu)
 				vmcs_clear(vcpu->vmcs);
 
 			vpid_sync_context(vcpu->vpid);
-			ept_sync_context(vcpu->eptp);
+			ept_sync_context(vcpu->vmx_instance->eptp);
 
 			vcpu->launched = 0;
 			vmcs_load(vcpu->vmcs);
@@ -715,7 +717,7 @@ static void __vmx_sync_helper(void *ptr)
 {
 	struct vmx_vcpu *vcpu = ptr;
 
-	ept_sync_context(vcpu->eptp);
+	ept_sync_context(vcpu->vmx_instance->eptp);
 }
 
 struct sync_addr_args {
@@ -727,7 +729,7 @@ static void __vmx_sync_individual_addr_helper(void *ptr)
 {
 	struct sync_addr_args *args = ptr;
 
-	ept_sync_individual_addr(args->vcpu->eptp, (args->gpa & ~(PAGE_SIZE - 1)));
+	ept_sync_individual_addr(args->vcpu->vmx_instance->eptp, (args->gpa & ~(PAGE_SIZE - 1)));
 }
 
 /**
@@ -1084,7 +1086,7 @@ static void vmx_setup_vmcs(struct vmx_vcpu *vcpu)
 					 vmcs_config.cpu_based_2nd_exec_ctrl);
 	}
 
-	vmcs_write64(EPT_POINTER, vcpu->eptp);
+	vmcs_write64(EPT_POINTER, vcpu->vmx_instance->eptp);
 
 	vmcs_write32(PAGE_FAULT_ERROR_CODE_MASK, 0);
 	vmcs_write32(PAGE_FAULT_ERROR_CODE_MATCH, 0);
@@ -1230,7 +1232,7 @@ static struct vmx_vcpu *vmx_create_vcpu(struct dune_config *conf)
 {
 	struct vmx_vcpu *vcpu;
 	struct desc_ptr dt;
-
+	bool first_vcpu = false;
 	if (conf->vcpu) {
 		/* This Dune configuration already has a VCPU. */
 		vcpu = (struct vmx_vcpu *)conf->vcpu;
@@ -1243,11 +1245,23 @@ static struct vmx_vcpu *vmx_create_vcpu(struct dune_config *conf)
 	vcpu = kmalloc(sizeof(struct vmx_vcpu), GFP_KERNEL);
 	if (!vcpu)
 		return NULL;
-
+	if (vmx_instance == NULL) {
+		vmx_instance = kmalloc(sizeof(struct vmx_vcpu), GFP_KERNEL);
+		if (!vmx_instance){
+			kfree(vcpu);
+			return NULL;
+		}
+		first_vcpu = true;
+		memset(vmx_instance, 0, sizeof(*vmx_instance));
+		printk(KERN_INFO "vmx_instance initialized at %p\n", vmx_instance);
+	}
 	memset(vcpu, 0, sizeof(*vcpu));
-
+	
 	list_add(&vcpu->list, &vcpus);
 
+	vcpu->vmx_instance = vmx_instance;
+	vmx_instance->ref_cnt++;
+	printk(KERN_INFO "vmx_instance->ref_cnt %d\n", vmx_instance->ref_cnt);
 	vcpu->conf = conf;
 	conf->vcpu = (u64)vcpu;
 
@@ -1266,10 +1280,14 @@ static struct vmx_vcpu *vmx_create_vcpu(struct dune_config *conf)
 	vcpu->idt_base = (void *)dt.address;
 	printk(KERN_INFO "Set up interrupt descriptor table %p\n", vcpu->idt_base);
 
-	spin_lock_init(&vcpu->ept_lock);
-	if (vmx_init_ept(vcpu))
+	if (first_vcpu) {
+		spin_lock_init(&vmx_instance->ept_lock);
+	}
+	if (first_vcpu && vmx_init_ept(vmx_instance))
 		goto fail_ept;
-	vcpu->eptp = construct_eptp(vcpu->ept_root);
+	if (first_vcpu) {
+		vmx_instance->eptp = construct_eptp(vmx_instance->ept_root);
+	}
 
 	vmx_get_cpu(vcpu);
 	vmx_setup_vmcs(vcpu);
@@ -1277,8 +1295,8 @@ static struct vmx_vcpu *vmx_create_vcpu(struct dune_config *conf)
 	vmx_setup_registers(vcpu, conf);
 	vmx_put_cpu(vcpu);
 
-	if (cpu_has_vmx_ept_ad_bits()) {
-		vcpu->ept_ad_enabled = true;
+	if (first_vcpu && cpu_has_vmx_ept_ad_bits()) {
+		vmx_instance->ept_ad_enabled = true;
 		printk(KERN_INFO "vmx: enabled EPT A/D bits");
 	}
 	if (vmx_create_ept(vcpu))
@@ -1292,6 +1310,10 @@ fail_vpid:
 	vmx_free_vmcs(vcpu->vmcs);
 fail_vmcs:
 	kfree(vcpu);
+	if (--vmx_instance->ref_cnt == 0) {
+		kfree(vmx_instance);
+		vmx_instance = NULL;
+	}
 	return NULL;
 }
 
@@ -1301,14 +1323,15 @@ fail_vmcs:
  */
 static void vmx_destroy_vcpu(struct vmx_vcpu *vcpu)
 {
-	vmx_destroy_ept(vcpu);
+	if (current->mm)
+		mmu_notifier_unregister(&vcpu->mmu_notifier, current->mm);
 	vmx_get_cpu(vcpu);
-	ept_sync_context(vcpu->eptp);
 	vmcs_clear(vcpu->vmcs);
 	this_cpu_write(local_vcpu, NULL);
 	vmx_put_cpu(vcpu);
 	vmx_free_vpid(vcpu);
 	vmx_free_vmcs(vcpu->vmcs);
+	vcpu->vmx_instance->ref_cnt--;
 	kfree(vcpu);
 }
 
@@ -1325,6 +1348,14 @@ void vmx_cleanup(void)
 		}
 		list_del(&vcpu->list);
 		vmx_destroy_vcpu(vcpu);
+	}
+	if (vmx_instance != NULL) {
+		BUG_ON(vmx_instance->ref_cnt != 0);
+		printk(KERN_ERR "vmx: destroyed all vCPUs, vmx_instance->ref_cnt %d\n", vmx_instance->ref_cnt);
+		vmx_destroy_ept(vmx_instance);
+		ept_sync_context(vmx_instance->eptp);
+		kfree(vmx_instance);
+		vmx_instance = NULL;
 	}
 }
 
@@ -1859,11 +1890,12 @@ int vmx_launch(struct dune_config *conf, int64_t *ret_code)
 	int ret, done = 0;
 	u32 exit_intr_info;
 	bool rescheduled = false;
+	//printk(KERN_ERR "vmx: before vmx_create_vcpu\n");
 	struct vmx_vcpu *vcpu = vmx_create_vcpu(conf);
 	if (!vcpu)
 		return -ENOMEM;
 
-	printk(KERN_ERR "vmx: created VCPU (VPID %d) with ept root %lx\n", vcpu->vpid, vcpu->ept_root);
+	printk(KERN_ERR "vmx: created VCPU (VPID %d) with ept root %lx, vmx_instance %p vmx_instance->ref_cnt %d\n", vcpu->vpid, vcpu->vmx_instance->ept_root, vmx_instance, vmx_instance->ref_cnt);
 
 	while (1) {
 		vmx_get_cpu(vcpu);

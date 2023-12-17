@@ -33,6 +33,7 @@ extern sighandler_t dune_signal(int sig, sighandler_t cb);
 extern unsigned long dune_get_user_fs(void);
 extern void dune_set_user_fs(unsigned long fs_base);
 
+extern __thread uint64_t interrupt_ts;
 #ifndef assert
 #define assert(expr)                                                           \
 	if (!(expr)) {                                                             \

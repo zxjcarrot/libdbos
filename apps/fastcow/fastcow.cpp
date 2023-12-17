@@ -28,8 +28,8 @@ void *asm_memset(void *s, int c, size_t n);
 }
 #endif
 
-#define SNAPSHOT_CORE 13 
-#define ASYNC_COPY_CORE 14
+#define SNAPSHOT_CORE 52   
+#define ASYNC_COPY_CORE 54
 #define MB (1024 * 1024ULL)
 
 unsigned long rdtsc_overhead;
@@ -38,6 +38,13 @@ volatile bool writer_ready[128];
 uint64_t cow_region_begin;
 uint64_t cow_region_end;
 volatile uint64_t cycles_start;
+volatile double program_start_timestamp;
+volatile bool main_exited = false;
+
+__thread uint64_t cycles_spent_in_flt;
+__thread uint64_t cycles_access_start;
+__thread uint64_t cycles_spent_all_access;
+__thread uint64_t cycles_spent_for_interrupt;
 enum class thread_state {
 	NONE = 0,
 	MAIN = 1,
@@ -168,29 +175,6 @@ static void snapshot_worker_tlb_flush_batch(ipi_message_t*msg_buf, uint64_t n_ms
 	}
 }
 
-// int pgtable_set_cow(const void *arg, ptent_t *pte, void *va, int level) {
-// 	int ret;
-// 	struct page *pg = dune_pa2page(PTE_ADDR(*pte));
-	
-// 	uint64_t can_va = canonical_virtual_address(va);
-
-// 	if ((((uint64_t)can_va) >= PAGEBASE && ((uint64_t)can_va) < PAGEBASE_END)) {
-		
-// 	}  else if (((((uint64_t)can_va) >= IPI_ADDR_RING_BASE && ((uint64_t)can_va) < IPI_ADDR_SHARED_STATE_END)) ||
-// 		((uint64_t)can_va) >= APIC_BASE ||
-// 		(((uint64_t)can_va) >= POSTED_INTR_DESCS_BASE && (uint64_t)can_va < POSTED_INTR_DESCS_BASE + 104 * PGSIZE) ||
-// 		(((uint64_t)can_va) >= dune_pmem_alloc_begin() && (uint64_t)can_va < dune_pmem_alloc_end()) ) {
-
-// 	}  else {
-// 		if ((*pte & PTE_W) && (*pte & PTE_P) && !(*pte & PTE_STACK) && !(*pte & PTE_COW)) { // Ignore pages that are originally not writable or pages that are already marked with CoW bit. 
-// 			*pte = (*pte & ~(PTE_W)) | PTE_COW ; // disable write and set the COW bit. The cow bit is used to determine if copy is needed in page fault.
-// 		}
-// 	}
-
-// 	return 0;
-// }
-
-
 int pgtable_set_cow(const void *arg, ptent_t *pte, void *va, int level) {
 	int ret;
 	struct page *pg = dune_pa2page(PTE_ADDR(*pte));
@@ -233,15 +217,10 @@ static void tlb_shootdown(uint64_t addr, int source_core, int target_core, volat
 		}
 	}
 }
-struct page_ {
-	char d[4096];
-}ts_pages[128];
-
-//static __thread struct page_ ts_p;
 
 void vm_pgflt_handler(uintptr_t addr, uint64_t fec, struct dune_tf *tf)
 {
-	//unsigned long start = rdtscllp();
+	unsigned long start = rdtscll();
 	retry:
 
 	ptent_t *pte = NULL;
@@ -249,7 +228,6 @@ void vm_pgflt_handler(uintptr_t addr, uint64_t fec, struct dune_tf *tf)
 
 	cow_state_t* state = get_shared_cow_state();
 
-	//state->page_faults++;
 	int cpu_id = dune_ipi_get_cpu_id();
 	bool snapshot = false;
 	if (cpu_id == SNAPSHOT_CORE) {
@@ -261,21 +239,33 @@ void vm_pgflt_handler(uintptr_t addr, uint64_t fec, struct dune_tf *tf)
 		rc = dune_vm_lookup(state->pgroot, (void *)addr, 0, &pte);
 		//dune_printf("1 pgflt on main cpus %d pgroot %p va %p fec %lu RIP 0x%016llx RSP 0x%016llx\n", cpu_id, state->pgroot, addr, fec, tf->rip, tf->rsp);
 	}
-	if (rc != 0) {
-		dune_printf("pgflt on cpu %d pgroot %p va %p fec %lu RIP 0x%016llx RSP 0x%016llx\n", cpu_id, state->pgroot, addr, fec, tf->rip, tf->rsp);
-	}
-	assert(rc == 0);
+	// if (rc != 0) {
+	// 	dune_printf("pgflt on cpu %d pgroot %p va %p fec %lu RIP 0x%016llx RSP 0x%016llx\n", cpu_id, state->pgroot, addr, fec, tf->rip, tf->rsp);
+	// }
+	// assert(rc == 0);
 	
 	ptent_t old_pte = *pte;
 
 	bool need_local_flush = true;
+	physaddr_t pte_addr = PTE_ADDR(old_pte);
+	ptent_t perm = PTE_FLAGS(*pte);
+	perm &= ~PTE_COW;
+	perm |= PTE_W;
+	perm &= ~PTE_LOCK; // Unlock on write
+	*pte = pte_addr | perm;
+	uint64_t now = rdtscll();
+	cycles_spent_in_flt += now - start;
+	cycles_spent_all_access += now - cycles_access_start;
+	cycles_spent_for_interrupt += interrupt_ts - cycles_access_start;
+	return;
 	if ((fec & FEC_W) && (*pte & PTE_COW) && !(old_pte & PTE_W)) {
 		//dune_printf("2 pgflt on main cpus %d pgroot %p va %p fec %lu RIP 0x%016llx RSP 0x%016llx\n", cpu_id, state->pgroot, addr, fec, tf->rip, tf->rsp);
 		ptent_t new_pte = old_pte | PTE_LOCK;
-		if (!pte_compare_exchange(pte, old_pte, new_pte)) {
-			//dune_printf("cmpexg failed\n");
-			goto out;
-		}
+		// if (!pte_compare_exchange(pte, old_pte, new_pte)) {
+		// 	//dune_printf("cmpexg failed\n");
+		// 	goto out;
+		// }
+		*pte = new_pte;
 		//dune_printf("3 pgflt on main cpus %d pgroot %p va %p fec %lu RIP 0x%016llx RSP 0x%016llx\n", cpu_id, state->pgroot, addr, fec, tf->rip, tf->rsp);
 		physaddr_t pte_addr = PTE_ADDR(old_pte);
 		void *newPage;
@@ -287,11 +277,11 @@ void vm_pgflt_handler(uintptr_t addr, uint64_t fec, struct dune_tf *tf)
 		perm |= PTE_W;
 		perm &= ~PTE_LOCK; // Unlock on write
 
-		if (dune_page_isfrompool(pte_addr) && pg->ref == 1) {
-			//dune_printf("paddr %p from pool\n", pte_addr);
-			__atomic_store_n(pte, pte_addr | perm, __ATOMIC_SEQ_CST);
-			goto out;
-		}
+		// if (dune_page_isfrompool(pte_addr) && pg->ref == 1) {
+		// 	//dune_printf("paddr %p from pool\n", pte_addr);
+		// 	__atomic_store_n(pte, pte_addr | perm, __ATOMIC_SEQ_CST);
+		// 	goto out;
+		// }
 		//*pte = pte_addr | (perm | PTE_LOCK);
 
 		if (snapshot) {
@@ -304,95 +294,96 @@ void vm_pgflt_handler(uintptr_t addr, uint64_t fec, struct dune_tf *tf)
 			}
 			//*pte = PTE_ADDR(newPage) | perm;
 			__atomic_store_n(pte, PTE_ADDR(newPage) | perm, __ATOMIC_SEQ_CST);
-			//dune_printf("snapshot pgflt on va %p fec %lu RIP 0x%016llx COW, new page %p\n", addr, fec, tf->rip, newPage);
+			dune_printf("snapshot pgflt on va %p fec %lu RIP 0x%016llx COW, new page %p\n", addr, fec, tf->rip, newPage);
 		} else {
 			//assert(state->get_thread_state(SNAPSHOT_CORE) == thread_state::SNAPSHOT);
-			ptent_t *snapshot_pte = NULL;
-			//dune_printf("4 pgflt on main cpus %d pgroot %p va %p fec %lu RIP 0x%016llx RSP 0x%016llx\n", cpu_id, state->pgroot, addr, fec, tf->rip, tf->rsp);
-			rc = dune_vm_lookup(state->pgroot_snapshot, (void *)addr, 0, &snapshot_pte);
-			//assert(rc == 0);
-			ptent_t old_snapshot_pte = *snapshot_pte;
-			ptent_t new_snapshot_pte = old_snapshot_pte | PTE_LOCK;
-			if (!pte_compare_exchange(snapshot_pte, old_snapshot_pte, new_snapshot_pte)) { // snapshot pte was locked somehow, retry
-				perm |= PTE_COW; // restore cow bit and write-protection bit for retry
-				perm &= ~PTE_W;
-				perm &= ~PTE_LOCK;
-				__atomic_store_n(pte, pte_addr | perm, __ATOMIC_SEQ_CST);
-				goto retry;
-			}
-			bool snapshot_thread_started = state->get_thread_state(SNAPSHOT_CORE) == thread_state::SNAPSHOT;
-			// locked snapshote_pte
-			ptent_t snapshot_pte_perm = PTE_FLAGS(new_snapshot_pte);
-			physaddr_t snapshot_pte_addr = PTE_ADDR(new_snapshot_pte);
-			bool accessed = new_snapshot_pte & PTE_A;
-			bool need_shootdown = accessed;
-			snapshot_pte_perm &= ~PTE_LOCK;
-			if (pte_addr != snapshot_pte_addr) { // already diverged, skip
-				__atomic_store_n(snapshot_pte, snapshot_pte_addr | snapshot_pte_perm, __ATOMIC_SEQ_CST);
-			} else {
-				// TODO decrement ref-count of physical page pointed by snapshot_pte
-				snapshot_pte_perm |= PTE_W;
-				snapshot_pte_perm &= ~PTE_COW;
-				if (cow_pipeline_copy_and_ipi && snapshot_thread_started) {
-					volatile ipi_call_tlb_flush_arg_t* call_arg = (ipi_call_tlb_flush_arg_t*)dune_ipi_percpu_working_page(cpu_id);
-					call_arg->ready_to_flush = false;
-					call_arg->flushed = false;
-					call_arg->addr = addr;
-					tlb_shootdown(addr, cpu_id, SNAPSHOT_CORE, call_arg, false); // send the ipi first
-					// now do the copying
-					newPage = dune_alloc_page_internal();
-					memcpy(newPage, (void *)PGADDR(addr), PGSIZE);
-					__atomic_store_n(snapshot_pte, PTE_ADDR(newPage) | snapshot_pte_perm, __ATOMIC_SEQ_CST);
-					call_arg->ready_to_flush = true;
-					asm volatile("mfence" ::: "memory");
-					dune_flush_tlb_one(addr); // flush the tlb while waiting 
-					while(!call_arg->flushed) {
-						//asm volatile("pause");
-					}
-					need_local_flush = false;
-					//state->tlb_shootdowns++;
-				} else {
-					newPage = dune_alloc_page_internal();
-					//memcpy((void*)&ts_pages[cpu_id], (void *)PGADDR(addr), PGSIZE);
-					memcpy((void*)newPage, (void *)PGADDR(addr), PGSIZE);
-					//memset(newPage, 0, PGSIZE);
-					//__atomic_store_n(snapshot_pte, PTE_ADDR(newPage) | snapshot_pte_perm, __ATOMIC_SEQ_CST);
-					if (!pte_compare_exchange(snapshot_pte, new_snapshot_pte, PTE_ADDR(newPage) | snapshot_pte_perm)) {
-						//dune_printf("cmpexg failed\n");
-						need_shootdown = true;
-						snapshot_pte_perm = PTE_FLAGS(*snapshot_pte);
-						snapshot_pte_perm |= PTE_W;
-						snapshot_pte_perm &= ~PTE_COW;
-						snapshot_pte_perm &= ~PTE_LOCK;
-						__atomic_store_n(snapshot_pte, PTE_ADDR(newPage) | snapshot_pte_perm, __ATOMIC_SEQ_CST);
-					}
-					//__atomic_store_n(snapshot_pte, snapshot_pte_addr | snapshot_pte_perm, __ATOMIC_SEQ_CST);
-					if (snapshot_thread_started && need_shootdown) {
-						volatile ipi_call_tlb_flush_arg_t* call_arg = (ipi_call_tlb_flush_arg_t*)dune_ipi_percpu_working_page(cpu_id);
-						call_arg->ready_to_flush = true;
-						call_arg->flushed = false;
-						call_arg->addr = addr;
-						tlb_shootdown(addr, cpu_id, SNAPSHOT_CORE, call_arg, true);
-						//state->tlb_shootdowns++;
-					}
-				}
-				if (dune_page_isfrompool(snapshot_pte_addr)) {
-					dune_page_put(dune_pa2page(snapshot_pte_addr));
-				}
-			}
+			// ptent_t *snapshot_pte = NULL;
+			// //dune_printf("4 pgflt on main cpus %d pgroot %p va %p fec %lu RIP 0x%016llx RSP 0x%016llx\n", cpu_id, state->pgroot, addr, fec, tf->rip, tf->rsp);
+			// rc = dune_vm_lookup(state->pgroot_snapshot, (void *)addr, 0, &snapshot_pte);
+			// //assert(rc == 0);
+			// ptent_t old_snapshot_pte = *snapshot_pte;
+			// ptent_t new_snapshot_pte = old_snapshot_pte | PTE_LOCK;
+			// if (!pte_compare_exchange(snapshot_pte, old_snapshot_pte, new_snapshot_pte)) { // snapshot pte was locked somehow, retry
+			// 	perm |= PTE_COW; // restore cow bit and write-protection bit for retry
+			// 	perm &= ~PTE_W;
+			// 	perm &= ~PTE_LOCK;
+			// 	__atomic_store_n(pte, pte_addr | perm, __ATOMIC_SEQ_CST);
+			// 	goto retry;
+			// }
+			// bool snapshot_thread_started = state->get_thread_state(SNAPSHOT_CORE) == thread_state::SNAPSHOT;
+			// // locked snapshote_pte
+			// ptent_t snapshot_pte_perm = PTE_FLAGS(new_snapshot_pte);
+			// physaddr_t snapshot_pte_addr = PTE_ADDR(new_snapshot_pte);
+			// bool accessed = new_snapshot_pte & PTE_A;
+			// bool need_shootdown = accessed;
+			// snapshot_pte_perm &= ~PTE_LOCK;
+			// if (pte_addr != snapshot_pte_addr) { // already diverged, skip
+			// 	__atomic_store_n(snapshot_pte, snapshot_pte_addr | snapshot_pte_perm, __ATOMIC_SEQ_CST);
+			// } else {
+			// 	// TODO decrement ref-count of physical page pointed by snapshot_pte
+			// 	snapshot_pte_perm |= PTE_W;
+			// 	snapshot_pte_perm &= ~PTE_COW;
+			// 	if (cow_pipeline_copy_and_ipi && snapshot_thread_started) {
+			// 		volatile ipi_call_tlb_flush_arg_t* call_arg = (ipi_call_tlb_flush_arg_t*)dune_ipi_percpu_working_page(cpu_id);
+			// 		call_arg->ready_to_flush = false;
+			// 		call_arg->flushed = false;
+			// 		call_arg->addr = addr;
+			// 		tlb_shootdown(addr, cpu_id, SNAPSHOT_CORE, call_arg, false); // send the ipi first
+			// 		// now do the copying
+			// 		newPage = dune_alloc_page_internal();
+			// 		memcpy(newPage, (void *)PGADDR(addr), PGSIZE);
+			// 		__atomic_store_n(snapshot_pte, PTE_ADDR(newPage) | snapshot_pte_perm, __ATOMIC_SEQ_CST);
+			// 		call_arg->ready_to_flush = true;
+			// 		asm volatile("mfence" ::: "memory");
+			// 		dune_flush_tlb_one(addr); // flush the tlb while waiting 
+			// 		while(!call_arg->flushed) {
+			// 			//asm volatile("pause");
+			// 		}
+			// 		need_local_flush = false;
+			// 		//state->tlb_shootdowns++;
+			// 	} else {
+			// 		//newPage = dune_alloc_page_internal();
+			// 		//memcpy((void*)&ts_pages[cpu_id], (void *)PGADDR(addr), PGSIZE);
+			// 		//memcpy((void*)newPage, (void *)PGADDR(addr), PGSIZE);
+			// 		//memset(newPage, 0, PGSIZE);
+			// 		//__atomic_store_n(snapshot_pte, PTE_ADDR(newPage) | snapshot_pte_perm, __ATOMIC_SEQ_CST);
+			// 		if (!pte_compare_exchange(snapshot_pte, new_snapshot_pte, snapshot_pte_addr | snapshot_pte_perm)) {
+			// 			//dune_printf("cmpexg failed\n");
+			// 			need_shootdown = true;
+			// 			snapshot_pte_perm = PTE_FLAGS(*snapshot_pte);
+			// 			snapshot_pte_perm |= PTE_W;
+			// 			snapshot_pte_perm &= ~PTE_COW;
+			// 			snapshot_pte_perm &= ~PTE_LOCK;
+			// 			__atomic_store_n(snapshot_pte, PTE_ADDR(newPage) | snapshot_pte_perm, __ATOMIC_SEQ_CST);
+			// 		}
+			// 		//__atomic_store_n(snapshot_pte, snapshot_pte_addr | snapshot_pte_perm, __ATOMIC_SEQ_CST);
+			// 		if (snapshot_thread_started && need_shootdown) {
+			// 			// volatile ipi_call_tlb_flush_arg_t* call_arg = (ipi_call_tlb_flush_arg_t*)dune_ipi_percpu_working_page(cpu_id);
+			// 			// call_arg->ready_to_flush = true;
+			// 			// call_arg->flushed = false;
+			// 			// call_arg->addr = addr;
+			// 			// tlb_shootdown(addr, cpu_id, SNAPSHOT_CORE, call_arg, true);
+			// 			//state->tlb_shootdowns++;
+			// 		}
+			// 	}
+			// 	if (dune_page_isfrompool(snapshot_pte_addr)) {
+			// 		dune_page_put(dune_pa2page(snapshot_pte_addr));
+			// 	}
+			// }
 			//dune_printf("5 pgflt on main cpus %d pgroot %p va %p fec %lu RIP 0x%016llx RSP 0x%016llx\n", cpu_id, state->pgroot, addr, fec, tf->rip, tf->rsp);
 			//dune_printf("main pgflt cpu %d on va %p fec %lu RIP 0x%016llx COW, new page %p, snapshot thread started %d, sent ipi\n", cpu_id, addr, fec, tf->rip, newPage, snapshot_thread_started);
 			// writer still uses the old physical page 
-			here:
-			__atomic_store_n(pte, pte_addr | perm, __ATOMIC_SEQ_CST);
+			//__atomic_store_n(pte, pte_addr | perm, __ATOMIC_SEQ_CST);
+			*pte = pte_addr | perm;
 		}
 	}
 out:
 	// Invalidate
-	if (need_local_flush) {
-		dune_flush_tlb_one(addr);
-	}
+	// if (need_local_flush) {
+	// 	//dune_flush_tlb_one(addr);
+	// }
 	//state->page_fault_cycles += rdtscllp() - cycles_start;
+	cycles_spent_in_flt += rdtscll() - start;
 	return;
 }
 
@@ -443,6 +434,7 @@ void *t_snapshot(void *arg) {
     		elapsed = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1000000.0;
 			dune_printf("Snapshot: first scan finished, s %lu, took %.6f seconds\n", s, elapsed);
 			scaned = true;
+			break;
 		}
 	}
 	//sleep(20);
@@ -631,8 +623,16 @@ void* page_table_copy_worker(void*) {
 
 	//dune_procmap_dump();
 
-	while (true) {
-		while (!state->async_copy_job);
+	while (!main_exited) {
+		while (!state->async_copy_job) {
+			//usleep(100);
+			if (main_exited) {
+				break;
+			}
+		}
+		if (main_exited) {
+			break;
+		}
 		state->async_copy_job = false;
 		asm volatile("mfence" ::: "memory");
 		//ptent_t *pgroot = state->pgroot;
@@ -655,7 +655,7 @@ void* page_table_copy_worker(void*) {
     	double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1000000.0;
 		printf("done cow_dup_pgtble, took %.6f seconds, new root %p %p, copied from %p\n", elapsed, state->shadow_pgroot1, state->shadow_pgroot2, pgroot_copy_from);
 	}
-
+	printf("page_table_copy_worker finished\n");
 	return NULL;
 }
 
@@ -910,8 +910,8 @@ void *random_access_thread(void *arg) {
 	size_t pages_per_worker = num_pages / num_threads;
 	struct timeval start, end;
 	gettimeofday(&start, NULL);
-    dune_prefault_pages();
-	memset(memory, 0, size);
+    //dune_prefault_pages();
+	//memset(memory, 0, size);
     gettimeofday(&end, NULL);
     double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1000000.0;
 
@@ -920,11 +920,14 @@ void *random_access_thread(void *arg) {
 	writer_ready[cpu_id] = true;
 	asm volatile("mfence" ::: "memory");
     
-	printf("Time taken for dune_prefault_pages on thread %d: %.6f seconds\n", thread_id, elapsed);
+	gettimeofday(&start, NULL);
+	double seconds_since_program_start = (start.tv_sec) + (start.tv_usec) / 1000000.0 - program_start_timestamp;
 
 	while(!(*thread_arg->ready_to_go));
     //sleep(1);
 	LatencyHistogram *hist = new LatencyHistogram(kHistogramBinCount, 0, 1);
+	printf("Time taken for dune_prefault_pages on thread %d: %.6f seconds, seconds_since_program_start %.6f seconds\n", thread_id, elapsed, seconds_since_program_start);
+
 	//return hist;
 	// if (thread_id == 1) {
 	// 	dune_procmap_dump();
@@ -942,6 +945,7 @@ void *random_access_thread(void *arg) {
 	for (size_t i = start_p; i < end_p; i++) {
 		// uint64_t x = RandomGenerator::getRandU64();
 		// size_t index = (x % (end_p - start_p) + start_p) * PGSIZE;
+		cycles_access_start = rdtscll();
 		size_t index = i * PGSIZE;
 		memory[index] += 1; // Simple write operation to trigger CoW
 		s += memory[index];
@@ -966,9 +970,9 @@ void *random_access_thread(void *arg) {
 	// }
     gettimeofday(&end, NULL);
     elapsed = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1000000.0;
-    printf("Thread %d time taken for random memory access: %.6f seconds s %lu, cycles per fault %lu, num_pages %lu, pages per worker %lu\n", thread_id, elapsed, s, (rdtscllp() - ts)/(accesses), num_pages, pages_per_worker);
+    printf("Thread %d time taken for random memory access: %.6f seconds s %lu, cycles per fault %lu, avg_cycles_spent_per_fault_handler %lu, avg_cycles_per_access %lu, avg_cycles_to_interrupt %lu, num_pages %lu, pages per worker %lu, page range[%d, %d]\n", thread_id, elapsed, s, (rdtscllp() - ts)/(accesses), cycles_spent_in_flt /(accesses) , cycles_spent_all_access / accesses, cycles_spent_for_interrupt / accesses, num_pages, pages_per_worker, start_p, end_p);
 	//dune_printf("random_access_thread tlb shootdowns %d, page_faults %d\n", state->tlb_shootdowns, state->page_faults);
-	dune_ipi_print_stats();
+	//dune_ipi_print_stats();
 	state->set_thread_state(cpu_id, thread_state::NONE);
 	sleep(30);
     return hist;
@@ -978,6 +982,9 @@ LatencyHistogram hist(kHistogramBinCount, 0, 1);
 
 int main(int argc, char *argv[])
 {
+	struct timeval start, end;
+	gettimeofday(&start, NULL);
+	program_start_timestamp = (start.tv_sec) + (start.tv_usec) / 1000000.0;
 	volatile int ret;
 	cpu_set_t cpuset;
 	CPU_ZERO(&cpuset);
@@ -1036,22 +1043,16 @@ int main(int argc, char *argv[])
 	rdtsc_overhead = measure_tsc_overhead();
 	synch_tsc();
 
-	struct timeval start, end;
+	
     gettimeofday(&start, NULL);
     memset((char*)memory, 0, memory_size);
+	dune_prefault_pages();
     gettimeofday(&end, NULL);
     double elapsed = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1000000.0;
     
 	cow_region_begin = (uint64_t)memory;
 	cow_region_end = ((uint64_t)memory) + memory_size;
 	printf("Time taken for memset(fault): %.6f seconds, cow region[%p, %p]\n", elapsed, cow_region_begin, cow_region_end);
-
-
-	// gettimeofday(&start, NULL);
-    // dune_prefault_pages();
-    // gettimeofday(&end, NULL);
-    // elapsed = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1000000.0;
-	// printf("Time taken for dune_prefault_pages: %.6f seconds\n", elapsed);
 
 
 	cow_state_init();
@@ -1064,7 +1065,7 @@ int main(int argc, char *argv[])
     for (int i = 0; i < num_threads; ++i) { // Random access after fork
 		pthread_attr_init(&attrs[i]);
 		CPU_ZERO(&cpus[i]);
-		CPU_SET(i + 1, &cpus[i]);
+		CPU_SET((i + 1) * 2, &cpus[i]);
 		pthread_attr_setaffinity_np(&attrs[i], sizeof(cpu_set_t), &cpus[i]);
 		targs[i].memory = (char*)memory;
 		targs[i].ready_to_go = &ready_to_go;
@@ -1079,7 +1080,7 @@ int main(int argc, char *argv[])
 		while(!writer_ready[i]);
 	}
 	printf("All ready\n");
-	cow_init();
+	//cow_init();
 	volatile auto state = get_shared_cow_state();
 	state->set_thread_state(cpu_id, thread_state::MAIN);
 	printf("cow inited\n");
@@ -1093,18 +1094,20 @@ int main(int argc, char *argv[])
 	targs[num_threads].size = memory_size;
 	targs[num_threads].count = count;
 	targs[num_threads].num_threads = num_threads;
-    branch_off(t_snapshot, (void*)&targs[num_threads]);
+    //branch_off(t_snapshot, (void*)&targs[num_threads]);
+	dune_vm_page_walk(state->pgroot, VA_START, VA_END, pgtable_set_cow, NULL);
     gettimeofday(&end, NULL);
     elapsed = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1000000.0;
     printf("Time taken for fast copy-on-write: %.6f seconds\n", elapsed);
-	while(state->get_thread_state(SNAPSHOT_CORE) != thread_state::SNAPSHOT);
-	assert(state->get_thread_state(SNAPSHOT_CORE) == thread_state::SNAPSHOT);
+	//while(state->get_thread_state(SNAPSHOT_CORE) != thread_state::SNAPSHOT);
+	//assert(state->get_thread_state(SNAPSHOT_CORE) == thread_state::SNAPSHOT);
 	//sleep(2);
 	ready_to_go = true;
 	asm volatile("mfence" ::: "memory");
 	void *ret_val;
     for (int i = 0; i < num_threads; ++i) {
         pthread_join(threads[i], &ret_val);
+		//printf("thread %d joined \n", i);
         LatencyHistogram * lHist = (LatencyHistogram *)ret_val;
         hist.Merge(*lHist);
         delete lHist;
@@ -1118,9 +1121,11 @@ int main(int argc, char *argv[])
     double p95Latency = hist.getPercentile(95);
     double p99Latency = hist.getPercentile(99);
     double p999Latency = hist.getPercentile(99.9);
-    printf("min %.2f  avg %.2f max %.2f p50 %.2f p75 %.2f p90 %.2f p95 %.2f p99 %.2f p99.9 %.2f\n", minLatency, avgLatency, maxLatency, p50Latency, p75Latency, p90Latency, p95Latency, p99Latency, p999Latency);
-	printf("main tlb shootdowns %d, page_faults %d, cycles/fault %lu\n", state->tlb_shootdowns, state->page_faults, state->page_fault_cycles / state->page_faults);
-	sleep(50);
-	//exit(0);
+    //printf("min %.2f  avg %.2f max %.2f p50 %.2f p75 %.2f p90 %.2f p95 %.2f p99 %.2f p99.9 %.2f\n", minLatency, avgLatency, maxLatency, p50Latency, p75Latency, p90Latency, p95Latency, p99Latency, p999Latency);
+	//printf("main tlb shootdowns %d, page_faults %d, cycles/fault %lu\n", state->tlb_shootdowns, state->page_faults, state->page_fault_cycles / state->page_faults);
+	sleep(30);
+	main_exited = true;
+	
+	asm volatile("mfence" ::: "memory");
 	return 0;
 }

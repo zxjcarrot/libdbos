@@ -203,7 +203,7 @@ int main(int argc, char *argv[])
 	benchmark_syscall();
 	benchmark_fork_fault();
 	
-	//benchmark_fault();
+	benchmark_fault();
 
 	mem = mmap(NULL, NRPGS * PGSIZE * 2, PROT_READ | PROT_WRITE,
 			   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -212,8 +212,8 @@ int main(int argc, char *argv[])
 		return -1;
 
 	prime_memory();
-	//benchmark_appel1();
-	//benchmark_appel2();
+	benchmark_appel1();
+	benchmark_appel2();
 
 	return 0;
 }

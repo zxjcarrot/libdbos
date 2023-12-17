@@ -12,6 +12,13 @@
 static dune_syscall_cb syscall_cb;
 static dune_pgflt_cb pgflt_cb;
 static dune_intr_cb intr_cbs[IDT_ENTRIES];
+__thread uint64_t interrupt_ts;
+static inline unsigned long rdtscll(void)
+{
+	unsigned int a, d;
+	asm volatile("rdtsc" : "=a"(a), "=d"(d) : : "%rbx", "%rcx");
+	return ((unsigned long)a) | (((unsigned long)d) << 32);
+}
 
 static inline unsigned long read_cr2(void)
 {
@@ -159,6 +166,7 @@ void dune_trap_handler(int num, struct dune_tf *tf)
 	// 			 : "=r"((unsigned long)ret)
 	// 			 :"r"((unsigned long) num), "r"((unsigned long) tf->rip), "r"((unsigned long)tf->rsp), "r"((unsigned long)tf->err): "rax", "rdi", "rsi", "rdx", "rcx");
 	//dune_printf("trap %d\n", num);
+	interrupt_ts = rdtscll();
 	if (intr_cbs[num]) {
 		intr_cbs[num](tf);
 		return;
