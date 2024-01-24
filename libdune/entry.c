@@ -512,17 +512,46 @@ static void map_stack_cb(const struct dune_procmap_entry *e)
 	}
 }
 
+static void map_stack_cb_with_2nd_pgtable(const struct dune_procmap_entry *e, void *arg)
+{
+	unsigned long esp;
+
+	asm("mov %%rsp, %0" : "=r"(esp));
+
+	if (esp >= e->begin && esp < e->end) {
+		void *p = (void *)e->begin;
+		int len = e->end - e->begin;
+		unsigned long page = PGADDR(p);
+		unsigned long page_end = PGADDR((char *)p + len);
+		unsigned long l = (page_end - page);
+		void *pg = (void *)page;
+
+		//dune_vm_map_phys(pgroot, pg, l, (void *)dune_va_to_pa(pg), PERM_R | PERM_X | PERM_W | PERM_USR4);
+		dune_vm_map_phys((ptent_t*)arg, pg, l, (void *)dune_va_to_pa(pg), PERM_R | PERM_X | PERM_W | PERM_USR4);
+		printf("map_stack_cb_with_2nd_pgtable stack [%lx-%lx], page %p, page_end %p, l %lu\n", (uintptr_t)e->begin, (uintptr_t)e->end, page, page_end, l);
+	}
+}
+
 static void map_stack(void)
 {
 	dune_procmap_iterate(map_stack_cb);
 }
 
-static int do_dune_enter(struct dune_percpu *percpu)
+void dune_map_stack_with_2nd_pgtable(void* arg)
+{
+	dune_procmap_iterate2(map_stack_cb_with_2nd_pgtable, arg);
+}
+
+static int do_dune_enter(struct dune_percpu *percpu, void * arg)
 {
 	struct dune_config *conf;
 	int ret;
 
-	map_stack();
+	if (arg) {
+		dune_map_stack_with_2nd_pgtable(arg);
+	} else {
+		map_stack();
+	}
 
 	conf = malloc(sizeof(struct dune_config));
 
@@ -567,6 +596,21 @@ static int do_dune_enter(struct dune_percpu *percpu)
 // 	printf("dune: --- End Config Dump ---\n");
 // }
 
+static __attribute__((unused)) void dune_dump_config(struct dune_config *conf)
+{
+	printf("dune: --- Begin Config Dump ---\n");
+	printf("dune: RET %lld STATUS %lld\n", conf->ret, conf->status);
+	printf("dune: RFLAGS 0x%016llx CR3 0x%016llx RIP 0x%016llx\n", conf->rflags, conf->cr3, conf->rip);
+	printf("dune: RAX 0x%016llx RCX 0x%016llx\n", conf->rax, conf->rcx);
+	printf("dune: RDX 0x%016llx RBX 0x%016llx\n", conf->rdx, conf->rbx);
+	printf("dune: RSP 0x%016llx RBP 0x%016llx\n", conf->rsp, conf->rbp);
+	printf("dune: RSI 0x%016llx RDI 0x%016llx\n", conf->rsi, conf->rdi);
+	printf("dune: R8  0x%016llx R9  0x%016llx\n", conf->r8, conf->r9);
+	printf("dune: R10 0x%016llx R11 0x%016llx\n", conf->r10, conf->r11);
+	printf("dune: R12 0x%016llx R13 0x%016llx\n", conf->r12, conf->r13);
+	printf("dune: R14 0x%016llx R15 0x%016llx\n", conf->r14, conf->r15);
+	printf("dune: --- End Config Dump ---\n");
+}
 /**
  * on_dune_exit - handle Dune exits
  *
@@ -627,13 +671,13 @@ int dune_enter(void)
 
 	// check if this process already entered Dune before a fork...
 	if (lpercpu)
-		return do_dune_enter(lpercpu);
+		return do_dune_enter(lpercpu, NULL);
 
 	percpu = create_percpu();
 	if (!percpu)
 		return -ENOMEM;
 
-	ret = do_dune_enter(percpu);
+	ret = do_dune_enter(percpu, NULL);
 
 	if (ret) {
 		free_percpu(percpu);
@@ -644,26 +688,28 @@ int dune_enter(void)
 	return 0;
 }
 
-int dune_enter_ex(void *percpu)
+int dune_enter_with_2nd_pgtable(void* arg)
 {
+	struct dune_percpu *percpu;
 	int ret;
-	struct dune_percpu *pcpu = (struct dune_percpu *)percpu;
-	unsigned long fs_base;
 
-	if (arch_prctl(ARCH_GET_FS, &fs_base) == -1) {
-		printf("dune: failed to get FS register\n");
-		return -EIO;
-	}
+	// check if this process already entered Dune before a fork...
+	if (lpercpu)
+		return do_dune_enter(lpercpu, arg);
 
-	pcpu->kfs_base = fs_base;
-	pcpu->ufs_base = fs_base;
-	pcpu->in_usermode = 0;
+	percpu = create_percpu();
+	if (!percpu)
+		return -ENOMEM;
 
-	if ((ret = setup_safe_stack(pcpu))) {
+	ret = do_dune_enter(percpu, arg);
+
+	if (ret) {
+		free_percpu(percpu);
 		return ret;
 	}
 
-	return do_dune_enter(pcpu);
+	lpercpu = percpu;
+	return 0;
 }
 
 /**

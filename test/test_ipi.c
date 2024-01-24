@@ -49,7 +49,7 @@ void *t_start(void *arg) {
 	// wait for it be called in the next call which marks the ready flag in arg
 	char * page = dune_ipi_percpu_working_page(cpu_id);
 	//printf("page %p\n", page);
-	ipi_call_arg_t* call_arg = (ipi_call_arg_t*)page;
+	volatile ipi_call_arg_t* call_arg = (ipi_call_arg_t*)page;
 	call_arg->id = cpu_id;
 	call_arg->ready = 0;
 	ipi_message_t msg;
@@ -57,11 +57,11 @@ void *t_start(void *arg) {
 	msg.arg = call_arg;
 	msg.type = CALL_TYPE_NON_BATCHABLE;
 	if (cpu_id < NUM_THREADS -1) {
-		dune_queue_ipi_call(cpu_id, cpu_id + 1, msg);
+		//dune_queue_ipi_call(cpu_id, cpu_id + 1, msg);
 		dune_queue_ipi_call(cpu_id, cpu_id + 1, msg);
 		dune_send_ipi(cpu_id, cpu_id + 1);
 	} else { // self-ipi
-		dune_queue_ipi_call(cpu_id, cpu_id, msg);
+		//dune_queue_ipi_call(cpu_id, cpu_id, msg);
 		dune_queue_ipi_call(cpu_id, cpu_id, msg);
 		dune_send_ipi(cpu_id, cpu_id);
 	}

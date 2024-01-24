@@ -73,6 +73,40 @@ static int get_type(const char *path)
 	return PROCMAP_TYPE_UNKNOWN;
 }
 
+void dune_procmap_iterate2(dune_procmap_cb2 cb, void* arg) {
+	struct dune_procmap_entry e;
+	FILE *map;
+	unsigned int dev1, dev2, inode;
+	char read, write, execute, private;
+	char line[512];
+	char path[256];
+
+	map = fopen("/proc/self/maps", "r");
+	if (map == NULL) {
+		printf("Could not open /proc/self/maps!\n");
+		abort();
+	}
+
+	setvbuf(map, NULL, _IOFBF, 8192);
+
+	while (!feof(map)) {
+		path[0] = '\0';
+		if (fgets(line, 512, map) == NULL)
+			break;
+		sscanf((char *)&line, "%lx-%lx %c%c%c%c %lx %x:%x %d %s", &e.begin,
+			   &e.end, &read, &write, &execute, &private, &e.offset, &dev1,
+			   &dev2, &inode, path);
+		e.r = (read == 'r');
+		e.w = (write == 'w');
+		e.x = (execute == 'x');
+		e.p = (private == 'p');
+		e.path = path;
+		e.type = get_type(path);
+		cb(&e, arg);
+	}
+	fclose(map);
+}
+
 void dune_procmap_iterate(dune_procmap_cb cb)
 {
 	struct dune_procmap_entry e;

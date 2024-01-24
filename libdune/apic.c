@@ -98,8 +98,13 @@ static inline int __prepare_ICR2(unsigned int mask)
 
 static inline void __xapic_wait_icr_idle(void)
 {
+    uint64_t wait_loops = 0;
 	while (apic_read(APIC_ICR) & APIC_ICR_BUSY) {
-        asm volatile("pause");
+        //asm volatile("pause");
+        if (++wait_loops >= 1000000000UL) {
+            printf("__xapic_wait_icr_idle waited for too long\n");
+            assert(false);
+        }
     }
 }
 
@@ -116,7 +121,8 @@ static inline void apic_send_ipi(int apicid, int vector)
 }
 
 void dune_apic_eoi() {
-        wrmsrl(APIC_EOI_MSR, EOI_ACK);
+    //apic_write(XAPIC_EOI_OFFSET, APIC_EOI_ACK);
+    wrmsrl(APIC_EOI_MSR, EOI_ACK);
 }
 
 #define LOCK_PREFIX_HERE \

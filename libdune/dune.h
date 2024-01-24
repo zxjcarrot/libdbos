@@ -143,6 +143,7 @@ struct page {
 #define MAX_PAGES (1ul << 22) /* 4 GB of memory */
 #define PAGEBASE_END  (0x200000000 + (MAX_PAGES * PGSIZE))
 
+extern void dune_set_max_cores(int n);
 extern uintptr_t dune_pmem_alloc_begin();
 extern uintptr_t dune_pmem_alloc_end();
 extern void dune_prefault_pages();
@@ -311,8 +312,10 @@ struct dune_procmap_entry {
 };
 
 typedef void (*dune_procmap_cb)(const struct dune_procmap_entry *);
+typedef void (*dune_procmap_cb2)(const struct dune_procmap_entry *, void*);
 
 extern void dune_procmap_iterate(dune_procmap_cb cb);
+extern void dune_procmap_iterate2(dune_procmap_cb2 cb, void* arg);
 extern void dune_procmap_dump();
 
 // elf helper functions
@@ -344,6 +347,8 @@ extern int dune_elf_load_ph(struct dune_elf *elf, Elf64_Phdr *phdr, off_t off);
 
 extern int dune_init(bool map_full);
 extern int dune_enter();
+extern int dune_enter_with_2nd_pgtable(void* arg);
+extern void dune_map_stack_with_2nd_pgtable(void* arg);
 
 extern int dune_init_with_ipi(bool map_full);
 

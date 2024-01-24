@@ -34,6 +34,13 @@ typedef struct physical_page_allocator_t {
 static physical_page_allocator_t *p_allocator;
 static uintptr_t p_allocator_begin;
 static uintptr_t p_allocator_end;
+static int max_n_cores = 32; // maximum number of cores used by the application
+
+void dune_set_max_cores(int n) {
+	assert(n <= NUM_GLOBAL_LISTS)
+	max_n_cores = n;
+}
+
 uintptr_t dune_pmem_alloc_begin()
 {
 	return p_allocator_begin;
@@ -50,7 +57,7 @@ static void *do_mapping(void *base, unsigned long len)
 			   MAP_FIXED | MAP_HUGETLB | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
 	if (mem != (void *)base) {
-		printf("mmap for huge page failed: %s\n", strerror(errno));
+		printf("mmap for huge page failed: base %p, len %lu, %s\n", base, len, strerror(errno));
 		// try again without huge pages
 		mem = mmap((void *)base, len, PROT_READ | PROT_WRITE,
 				   MAP_FIXED | MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
@@ -65,16 +72,31 @@ static void *do_mapping(void *base, unsigned long len)
 
 static int grow_size(int list_id)
 {
+	uint64_t old_num_pages = p_allocator->num_pages;
+	if (old_num_pages >= MAX_PAGES) {
+		//printf("grow_size failed, old_num_pages %lu\n", old_num_pages);
+		return -ENOMEM;
+	}
 	int i;
 	uint64_t new_num_pages = __atomic_add_fetch(
 		&p_allocator->num_pages, GROW_SIZE,
 		__ATOMIC_RELEASE); // p_allocator->num_pages + GROW_SIZE;
+	if (new_num_pages > MAX_PAGES) {
+		__atomic_sub_fetch(
+		&p_allocator->num_pages, GROW_SIZE,
+		__ATOMIC_RELEASE);
+		//printf("grow_size failed, new_num_pages %lu\n", new_num_pages);
+		return -ENOMEM;
+	}
 	void *ptr;
-	uint64_t old_num_pages = new_num_pages - GROW_SIZE;
+	old_num_pages = new_num_pages - GROW_SIZE;
 	ptr = do_mapping((void *)PAGEBASE + old_num_pages * PGSIZE,
 					 GROW_SIZE * PGSIZE);
-	if (!ptr)
+	if (!ptr){
+		//printf("grow_size do_mapping failed, old_num_pages %lu\n", old_num_pages);
 		return -ENOMEM;
+	}
+		
 
 	for (i = old_num_pages; i < new_num_pages; i++) {
 		p_allocator->pages[i].ref = 0;
@@ -164,8 +186,51 @@ void dune_prefault_pages() {
 	}
 }
 
+static uint32_t rand_number() {
+	static __thread uint32_t seed = 5323;
+    // our initial starting seed is 5323
+    if (seed == 5323) {
+		seed = dune_get_cpu_id();
+	}
+
+    // Take the current seed and generate a new value from it
+    // Due to our use of large constants and overflow, it would be
+    // very hard for someone to predict what the next number is
+    // going to be from the previous one.
+    seed = (8253729 * seed + 2396403); 
+
+    return seed;
+}
+
+// Assume p_allocator->local_lists[to].page_mutex is taken and steal_from > to
+static bool dune_try_steal_pages(int steal_from, int to, int num_pages) {
+	bool stolen = false;
+	struct page * pg;
+	assert(steal_from > to);
+	if (pthread_mutex_trylock(&p_allocator->local_lists[steal_from].page_mutex)) {
+		return false;
+	}
+	while (!SLIST_EMPTY(&p_allocator->local_lists[steal_from].pages_free) && num_pages--) {
+		pg = SLIST_FIRST(&p_allocator->local_lists[steal_from].pages_free);
+		SLIST_REMOVE_HEAD(&p_allocator->local_lists[steal_from].pages_free, link);
+		SLIST_INSERT_HEAD(&p_allocator->local_lists[to].pages_free, pg, link);
+		stolen = true;
+	}
+	pthread_mutex_unlock(&p_allocator->local_lists[steal_from].page_mutex);
+	return stolen;
+}
+
 struct page *dune_page_alloc(void)
 {
+	int steal_attempts = 0;
+	retry:
+	if (steal_attempts > 100000) {
+		// printf(
+		// 	"dune_page_alloc failed to allocate a page after %d failed stealing attempts\n",
+		// 	steal_attempts);
+		return NULL;
+	}
+	static __thread int last_stealed = -1;
 	struct page *pg;
 	int cpu_id = dune_get_cpu_id();
 	if (cpu_id == -1) {
@@ -175,8 +240,21 @@ struct page *dune_page_alloc(void)
 	pthread_mutex_lock(&p_allocator->local_lists[cpu_id].page_mutex);
 	if (SLIST_EMPTY(&p_allocator->local_lists[cpu_id].pages_free)) {
 		if (grow_size(cpu_id)) {
+			// now try stealing from other local lists
+			if (last_stealed == -1) {
+				last_stealed = rand_number() % (NUM_GLOBAL_LISTS - max_n_cores) + max_n_cores;
+				assert(last_stealed < NUM_GLOBAL_LISTS);
+			}
+			++steal_attempts;
+			if (!dune_try_steal_pages(last_stealed, cpu_id, GROW_SIZE)) {
+				// stealing failed, retry again
+				last_stealed = -1;
+			} else {
+				//printf("cpu %d stolen %lu pages from cpu %d, max_n_cores %d\n", cpu_id, GROW_SIZE, last_stealed, max_n_cores);
+			}
 			pthread_mutex_unlock(&p_allocator->local_lists[cpu_id].page_mutex);
-			return NULL;
+			//return NULL;
+			goto retry;
 		}
 	}
 
@@ -237,6 +315,7 @@ int dune_page_init(void)
 	p_allocator = mmap(NULL, size, PROT_READ | PROT_WRITE,
 					   MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0);
 	if (p_allocator == MAP_FAILED) {
+		printf("dune_page_init mmap failed for %lu bytes\n", size);
 		goto err;
 	}
 	p_allocator_begin = (uintptr_t)p_allocator;
@@ -262,13 +341,15 @@ int dune_page_init(void)
 	}
 	int j = 0;
 	for (i = 0; i < MAX_PAGES; i += GROW_SIZE) {
-		ret = grow_size_and_populate(j);
+		ret = grow_size(j);
 		if (ret != 0) {
 			return ret;
 		}
-		j = (j + 1) % 55;
+		j = (j + 1) % NUM_GLOBAL_LISTS;
 	}
 	//dune_procmap_dump();
+	printf("dune_page_init succeeded, free pages per list %lu\n", MAX_PAGES /NUM_GLOBAL_LISTS );
+
 	return 0;
 
 err:

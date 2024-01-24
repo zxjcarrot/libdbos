@@ -1658,13 +1658,13 @@ static void vmx_handle_syscall(struct vmx_vcpu *vcpu)
 		vrsp = vmcs_readl(GUEST_RSP);
 		vmx_put_cpu(vcpu);
 
-		// printk(KERN_INFO "vmx: invalid syscall %llx, arg 1 %llx , arg 2 %llx, arg 3 %llx err %llx vm_rsp %llx \n", 
-		// 				  vcpu->regs[VCPU_REGS_RAX], 
-		// 				  vcpu->regs[VCPU_REGS_RDI], 
-		// 				  vcpu->regs[VCPU_REGS_RSI], 
-		// 				  vcpu->regs[VCPU_REGS_RDX],
-		// 				  vcpu->regs[VCPU_REGS_RCX],
-		// 				  vrsp);
+		printk(KERN_INFO "vmx: invalid syscall %llx, arg 1 %llx , arg 2 %llx, arg 3 %llx err %llx vm_rsp %llx \n", 
+						  vcpu->regs[VCPU_REGS_RAX], 
+						  vcpu->regs[VCPU_REGS_RDI], 
+						  vcpu->regs[VCPU_REGS_RSI], 
+						  vcpu->regs[VCPU_REGS_RDX],
+						  vcpu->regs[VCPU_REGS_RCX],
+						  vrsp);
 		//vmx_dump_cpu(vcpu);
 		vcpu->regs[VCPU_REGS_RAX] = -EINVAL;
 		return;
@@ -1770,6 +1770,42 @@ static int vmx_handle_nmi_exception(struct vmx_vcpu *vcpu)
 	vcpu->conf->status = intr_info & INTR_INFO_VECTOR_MASK;
 	return -EIO;
 }
+
+static void vmx_emulate_icr_write(u64 icr) {
+	/*int i;
+	unsigned long start_tick, end_tick, latency;
+	unsigned long rdtsc_overhead = measure_tsc_overhead();
+        synch_tsc();
+        start_tick = rdtscll_dune();
+	for (i = 0; i < 1000000; i++) { */
+		if (cpu_has_posted_interrupts()) {
+        		u32 destination = (u32)(icr >> 32);
+        		u8 vector = icr & 0xFF;
+			send_posted_ipi(destination, vector);
+		}
+	/* }
+	end_tick = rdtscllp_dune();
+        latency = (end_tick - start_tick - rdtsc_overhead) / 1000000;
+        printk(KERN_INFO "Latency: %ld cycles.\n", latency); */
+}
+
+static int vmx_handle_msr_write(struct vmx_vcpu *vcpu)
+{
+	u32 msr_addr;
+	u64 msr_data;
+	msr_addr = vcpu->regs[VCPU_REGS_RCX];
+	msr_data = (vcpu->regs[VCPU_REGS_RAX] & -1u)
+                       | ((u64)(vcpu->regs[VCPU_REGS_RDX] & -1u) << 32);
+	switch (msr_addr) {
+		case (APIC_BASE_MSR + (APIC_ICR >> 4)):
+			vmx_emulate_icr_write(msr_data);
+			break;
+		default:
+			return -1;
+	}
+	return 0;
+}
+
 /*
  * vmx_handle_external_interrupt - when posted interrupt processing is enabled,
  * the "Acknowledge interrupt on exit" VM-exit control must be enabled as well.
@@ -1846,35 +1882,35 @@ static void vmx_handle_queued_interrupts(struct vmx_vcpu *vcpu)
 {
 	//TODO: Does this have synchronization issues?
 	struct posted_interrupt_desc *desc = posted_interrupt_descriptors[raw_smp_processor_id()];
-        u64 outstanding = __atomic_exchange_n((u64 *)desc->extra, 0x0, 0);
-        if (get_bit(outstanding, 0)) {
+	u64 outstanding = __atomic_exchange_n((u64 *)desc->extra, 0x0, 0);
+	if (get_bit(outstanding, 0)) {
 		//there is a pending interrupt(s)
-                //copy bits 0-255 into a local buffer
-                u64 vectors[4];
-                long i, j;
+		//copy bits 0-255 into a local buffer
+		u64 vectors[4];
+		long i, j;
 		u16 guest_interrupt_status = vmcs_read16(GUEST_INTR_STATUS);
 		u8 rvi = guest_interrupt_status & 0xFF;
-                for (i = 0; i < 4; i++) {
-                    vectors[i] = __atomic_exchange_n((u64 *)desc->vectors + i, 0x0, 0);
-                }
 		for (i = 0; i < 4; i++) {
-                        if (vectors[i] == 0) continue;
-                        for (j = 0; j < 64; j++) {
-                                if (get_bit(vectors[i], j)) {
-                                        long vector = (i * 64) + j;
-				        //set the corresponding bit in the vIRR
-				        void *vapic_page = __va(vmcs_read64(VIRTUAL_APIC_PAGE_ADDR));
-				        u32 *to_set = (u32 *)((char *)vapic_page + (0x200 | ((vector & 0xE0) >> 1)));
-				        //set the bit at position (vector & 0x1F)
-				        u32 mask = 1 << (vector & 0x1F);
-				        *to_set |= mask;
-
-				        //update the value to be written to RVI
-				        rvi = rvi > vector ? rvi : vector;
-			        }
-                        }
+			vectors[i] = __atomic_exchange_n((u64 *)desc->vectors + i, 0x0, 0);
 		}
-                //set RVI
+		for (i = 0; i < 4; i++) {
+			if (vectors[i] == 0) continue;
+			for (j = 0; j < 64; j++) {
+				if (get_bit(vectors[i], j)) {
+					long vector = (i * 64) + j;
+					//set the corresponding bit in the vIRR
+					void *vapic_page = __va(vmcs_read64(VIRTUAL_APIC_PAGE_ADDR));
+					u32 *to_set = (u32 *)((char *)vapic_page + (0x200 | ((vector & 0xE0) >> 1)));
+					//set the bit at position (vector & 0x1F)
+					u32 mask = 1 << (vector & 0x1F);
+					*to_set |= mask;
+
+					//update the value to be written to RVI
+					rvi = rvi > vector ? rvi : vector;
+				}
+			}
+		}
+		//set RVI
 		guest_interrupt_status |= (u16)rvi;
 		vmcs_write16(GUEST_INTR_STATUS, guest_interrupt_status);
 	}
@@ -1948,7 +1984,9 @@ int vmx_launch(struct dune_config *conf, int64_t *ret_code)
 
 		local_irq_enable();
 
-		if (ret == EXIT_REASON_VMCALL || ret == EXIT_REASON_CPUID) {
+		if (ret == EXIT_REASON_VMCALL || 
+			ret == EXIT_REASON_CPUID ||
+			ret == EXIT_REASON_MSR_WRITE) {
 			vmx_step_instruction();
 		}
 
@@ -1962,6 +2000,9 @@ int vmx_launch(struct dune_config *conf, int64_t *ret_code)
 			done = vmx_handle_ept_violation(vcpu);
 		else if (ret == EXIT_REASON_EXCEPTION_NMI) {
 			if (vmx_handle_nmi_exception(vcpu))
+				done = 1;
+		} else if (ret == EXIT_REASON_MSR_WRITE) {
+			if (vmx_handle_msr_write(vcpu))
 				done = 1;
 		} else if (ret != EXIT_REASON_EXTERNAL_INTERRUPT) {
 			printk(KERN_INFO

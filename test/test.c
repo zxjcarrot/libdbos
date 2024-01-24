@@ -21,16 +21,19 @@ static int test_fork(void)
 	int pid;
 	int rc;
 
+	//printf("test_fork before dune_enter entered\n");
 	if (dune_enter())
 		return 1;
-
+	printf("test_fork dune_enter entered\n");
 	if (check_dune())
 		return 2;
 
+	printf("test_fork before fork succeeded\n");
 	pid = fork();
 	if (pid == -1)
 		return 3;
 
+	printf("test_fork fork succeeded\n");
 	/* child */
 	if (pid == 0) {
 		if (dune_enter())
@@ -141,7 +144,7 @@ static void run_test(struct test *t)
 	pid = fork();
 	if (pid == -1)
 		err(1, "fork()");
-
+	printf("fork succeeded\n");
 	/* child */
 	if (pid == 0) {
 		rc = t->cb();

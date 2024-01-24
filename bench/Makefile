@@ -4,12 +4,15 @@ CFLAGS	:= -DNDEBUG -Wall -g -MD -O3 -I../
 CPPFLAGS	:=  -DNDEBUG -Wall -g -MD -O3 -I../
 LDFLAGS := -ldune -lpthread
 
-bench_files := bench_dune bench_dune_ring bench_linux posted_ipi posted_ipi_send posted_ipi_receive posted_ipi_ping_pong bench_fork_cow bench_tabby_cow bench_ipi
+bench_files := bench_dune  bench_dune_exception bench_dune_ring bench_linux posted_ipi posted_ipi_send posted_ipi_receive posted_ipi_ping_pong bench_fork_cow bench_tabby_cow bench_ipi
 
 all: $(bench_files)
 
+bench_dune_exception: bench_dune_exception.o ../libdune/libdune.a
+	$(CC) $(CFLAGS) $(<) -L../libdune $(LDFLAGS) -o $(@)
+
 bench_dune: bench_dune.o ../libdune/libdune.a
-	  $(CC) $(CFLAGS) $(<) -L../libdune $(LDFLAGS) -o $(@)
+	$(CC) $(CFLAGS) $(<) -L../libdune $(LDFLAGS) -o $(@)
 
 bench_dune_ring: bench_dune_ring.o ../libdune/libdune.a
 	$(CC) $(CFLAGS) $(<) -L../libdune $(LDFLAGS) -o $(@)

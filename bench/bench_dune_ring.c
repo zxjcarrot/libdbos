@@ -136,7 +136,6 @@ static int test_ring_switch(void)
 
 	dune_register_syscall_handler(&syscall_handler3);
 
-
 	start_tsc = dune_get_ticks();
 	for (int i = 0; i < N; ++i) {
 		asm("movq %%rsp, %0" : "=r"(sp));

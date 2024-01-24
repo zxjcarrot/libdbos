@@ -117,6 +117,7 @@ void dune_procmap_find_mapping(const struct dune_procmap_entry * e) {
 }
 
 extern void dune_procmap_iterate(dune_procmap_cb cb);
+extern void dune_procmap_iterate2(dune_procmap_cb2 cb, void* arg);
 void dune_dump_trap_frame(struct dune_tf *tf)
 {
 	search_rip = tf->rip;
@@ -166,7 +167,7 @@ void dune_trap_handler(int num, struct dune_tf *tf)
 	// 			 : "=r"((unsigned long)ret)
 	// 			 :"r"((unsigned long) num), "r"((unsigned long) tf->rip), "r"((unsigned long)tf->rsp), "r"((unsigned long)tf->err): "rax", "rdi", "rsi", "rdx", "rcx");
 	//dune_printf("trap %d\n", num);
-	interrupt_ts = rdtscll();
+	//interrupt_ts = rdtscll();
 	if (intr_cbs[num]) {
 		intr_cbs[num](tf);
 		return;

@@ -14,14 +14,79 @@ static char * ipi_shared_state_page_pmem = NULL;
 static int n_msgs_collected;
 static int n_interrupts;
 static ipi_call_batch_func_t batch_ipi_call;
+// static void dune_ipi_interrupt_handler(struct dune_tf * tf) {
+//     asm volatile ("cli":::);
+//     dune_apic_eoi();
+//     int cpu_id = dune_get_cpu_id();
+//     volatile ipi_percpu_ring_t * rings_struct = &cpu_rings[cpu_id];
+//     ipi_message_t buf[IPI_MESSAGE_RINGBUF_SIZE * IPI_MAX_CPUS];
+//     ipi_message_t buf_batchable[IPI_MESSAGE_RINGBUF_SIZE * IPI_MAX_CPUS];
+//     ipi_message_t buf_nonbatchable[IPI_MESSAGE_RINGBUF_SIZE * IPI_MAX_CPUS];
+    
+//     rings_struct->phase = PHASE1;
+//     asm volatile("mfence" ::: "memory");
+//     //assert(cpu_id != -1);
+    
+//     uint64_t i;
+//     uint64_t n_msgs_batchable = 0;
+//     uint64_t n_msgs_nonbatchable = 0;
+//     uint64_t n_msgs = 0;
+
+//     //printf("dune_ipi_interrupt_handler\n");
+//     // read all messages and handle them at once
+//     for (i = 0; i < IPI_MAX_CPUS; ++i) {
+//         n_msgs += dune_collect_ipi_messages(cpu_id, i, buf + n_msgs);
+//     }
+//     for (i = 0; i < n_msgs; ++i) {
+//         if (buf[i].type == CALL_TYPE_BATCHABLE) {
+//             buf_batchable[n_msgs_batchable++] = buf[i];
+//         } else {
+//             buf_nonbatchable[n_msgs_nonbatchable++] = buf[i];
+//         }
+//     }
+//     for (i = 0; i < n_msgs_nonbatchable; ++i) {
+//         buf_nonbatchable[i].func(buf_nonbatchable[i].arg);
+//     }
+//     if (n_msgs_batchable > 0) {
+//         batch_ipi_call(buf_batchable, n_msgs_batchable);
+//     }
+//     rings_struct->phase = PHASE2;
+//     //n_msgs_collected += n_msgs;
+//     asm volatile("mfence" ::: "memory");
+//     n_msgs = 0;
+//     n_msgs_batchable = 0;
+//     n_msgs_nonbatchable = 0;
+//     for (i = 0; i < IPI_MAX_CPUS; ++i) {
+//         n_msgs += dune_collect_ipi_messages(cpu_id, i, buf + n_msgs);
+//     }
+//     for (i = 0; i < n_msgs; ++i) {
+//         if (buf[i].type == CALL_TYPE_BATCHABLE) {
+//             buf_batchable[n_msgs_batchable++] = buf[i];
+//         } else {
+//             buf_nonbatchable[n_msgs_nonbatchable++] = buf[i];
+//         }
+//     }
+//     for (i = 0; i < n_msgs_nonbatchable; ++i) {
+//         buf_nonbatchable[i].func(buf_nonbatchable[i].arg);
+//     }
+//     if (n_msgs_batchable > 0) {
+//         batch_ipi_call(buf_batchable, n_msgs_batchable);
+//     }
+    
+//     rings_struct->phase = NONE;
+//     asm volatile("mfence" ::: "memory");
+    
+// }
 static void dune_ipi_interrupt_handler(struct dune_tf * tf) {
     asm volatile ("cli":::);
+    dune_apic_eoi();
     int cpu_id = dune_get_cpu_id();
-    volatile ipi_percpu_ring_t * rings_struct = &cpu_rings[cpu_id];
+    volatile ipi_percpu_ring_t * rings = &cpu_rings[cpu_id];
     ipi_message_t buf[IPI_MESSAGE_RINGBUF_SIZE * IPI_MAX_CPUS];
     ipi_message_t buf_batchable[IPI_MESSAGE_RINGBUF_SIZE * IPI_MAX_CPUS];
     ipi_message_t buf_nonbatchable[IPI_MESSAGE_RINGBUF_SIZE * IPI_MAX_CPUS];
-    rings_struct->phase = PHASE1;
+    
+    rings->phase = PHASE1;
     asm volatile("mfence" ::: "memory");
     //assert(cpu_id != -1);
     
@@ -48,7 +113,7 @@ static void dune_ipi_interrupt_handler(struct dune_tf * tf) {
     if (n_msgs_batchable > 0) {
         batch_ipi_call(buf_batchable, n_msgs_batchable);
     }
-    rings_struct->phase = PHASE2;
+    rings->phase = PHASE2;
     //n_msgs_collected += n_msgs;
     asm volatile("mfence" ::: "memory");
     n_msgs = 0;
@@ -70,12 +135,14 @@ static void dune_ipi_interrupt_handler(struct dune_tf * tf) {
     if (n_msgs_batchable > 0) {
         batch_ipi_call(buf_batchable, n_msgs_batchable);
     }
-    rings_struct->phase = NONE;
-
+    
+    rings->phase = NONE;
+    asm volatile("mfence" ::: "memory");
+    //dune_apic_eoi(); // ack the interrupt
+    //asm volatile ("sti":::);
     //n_msgs_collected += n_msgs;
     //n_interrupts++;
-    dune_apic_eoi(); // ack the interrupt
-
+    
 }
 
 void dune_ipi_print_stats() {
@@ -138,21 +205,50 @@ char* dune_ipi_shared_state_page() {
     return ipi_shared_state_page_vmem;
 }
 
-bool dune_queue_ipi_call_fast(int src_core, int target_core, ipi_message_t msg) {
-    ipi_ring_t * ring = &cpu_rings[target_core].rings[src_core];
+bool dune_queue_ipi_call_empty(int src_core, int target_core) {
+    volatile ipi_ring_t * ring = &cpu_rings[target_core].rings[src_core];
     uint64_t head = __atomic_load_n(&ring->head, __ATOMIC_ACQUIRE);
     uint64_t tail = __atomic_load_n(&ring->tail, __ATOMIC_ACQUIRE);
-    //assert(head <= tail);
+    assert(head <= tail)
+    return head >= tail;
+}
+
+uint64_t dune_queue_ipi_call_head(int src_core, int target_core) {
+    volatile ipi_ring_t * ring = &cpu_rings[target_core].rings[src_core];
+    uint64_t head = __atomic_load_n(&ring->head, __ATOMIC_ACQUIRE);
+    return head;
+}
+
+uint64_t dune_queue_ipi_call_tail(int src_core, int target_core) {
+    volatile ipi_ring_t * ring = &cpu_rings[target_core].rings[src_core];
+    uint64_t tail = __atomic_load_n(&ring->tail, __ATOMIC_ACQUIRE);
+    return tail;
+}
+
+uint64_t dune_queue_ipi_call_fast(int src_core, int target_core, ipi_message_t msg) {
+    volatile ipi_ring_t * ring = &cpu_rings[target_core].rings[src_core];
+    uint64_t head = __atomic_load_n(&ring->head, __ATOMIC_ACQUIRE);
+    uint64_t tail = __atomic_load_n(&ring->tail, __ATOMIC_ACQUIRE);
+    assert(head <= tail);
     if (tail - head >= IPI_MESSAGE_RINGBUF_SIZE) 
-        return false;
+        return IPI_INVALID_NUMBER;
     ring->buf[tail % IPI_MESSAGE_RINGBUF_SIZE] = msg;
     __atomic_add_fetch(&ring->tail, 1, __ATOMIC_RELEASE);
-    return true;
+    return tail;
+}
+
+int dune_queued_ipi_phase(int target_core) {
+    volatile ipi_percpu_ring_t * rings_struct = &cpu_rings[target_core];
+    return (rings_struct->phase);
+}
+
+bool dune_ipi_call_number_collected(int src_core, int target_core, uint64_t call_num) {
+    volatile ipi_ring_t * ring = &cpu_rings[target_core].rings[src_core];
+    return __atomic_load_n(&ring->head, __ATOMIC_ACQUIRE) > call_num;
 }
 
 bool dune_queued_ipi_need_interrupt(int target_core) {
-    volatile ipi_percpu_ring_t * rings_struct = &cpu_rings[target_core];
-    return (rings_struct->phase != PHASE1);
+    return (dune_queued_ipi_phase(target_core) != PHASE1);
 }
 
 void dune_register_ipi_batch_call(ipi_call_batch_func_t func) {
@@ -178,6 +274,7 @@ uint64_t dune_collect_ipi_messages(int target_core, int src_core, ipi_message_t*
     if (head == tail) {
         return 0;
     }
+    assert(tail > head);
     uint64_t n_msgs = tail - head;
     for (uint64_t i = 0; i < n_msgs; ++i) {
         msgs[i] = ring->buf[(head + i) % IPI_MESSAGE_RINGBUF_SIZE];

@@ -6,6 +6,7 @@
 
 #include "dune.h"
 
+#define IPI_INVALID_NUMBER (0xffffffffffffffffULL)
 #define IPI_VECTOR 0xf2
 #define IPI_MAX_CPUS 128
 #define IPI_MESSAGE_RINGBUF_SIZE 2
@@ -52,9 +53,14 @@ typedef struct ipi_percpu_ring_t {
 #define IPI_ADDR_SHARED_STATE_BASE (IPI_ADDR_WORKING_MEM_END) // states shared by all vCPUs
 #define IPI_ADDR_SHARED_STATE_END (IPI_ADDR_WORKING_MEM_END + PGSIZE)
 
+extern int dune_queued_ipi_phase(int target_core);
+extern bool dune_ipi_call_number_collected(int source_core, int target_core, uint64_t call_num);
 extern bool dune_queued_ipi_need_interrupt(int target_core) ;
 extern void dune_queue_ipi_call(int src_core, int target_core, ipi_message_t msg);
-extern bool dune_queue_ipi_call_fast(int src_core, int target_core, ipi_message_t msg);
+extern bool dune_queue_ipi_call_empty(int src_core, int target_core);
+extern uint64_t dune_queue_ipi_call_head(int src_core, int target_core);
+extern uint64_t dune_queue_ipi_call_tail(int src_core, int target_core);
+extern uint64_t dune_queue_ipi_call_fast(int src_core, int target_core, ipi_message_t msg);
 extern void dune_send_ipi(int src_core, int target_core);
 extern int dune_ipi_init();
 extern uint64_t dune_collect_ipi_messages(int target_core, int src_core, ipi_message_t* msgs);
