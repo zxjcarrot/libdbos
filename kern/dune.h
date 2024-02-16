@@ -95,7 +95,22 @@ struct dune_trap_config {
 /* FIXME: magic page that maps to APIC of the host */
 #define GPA_APIC_PAGE ((1ul<<46)-4096)
 #define GPA_POSTED_INTR_DESCS (1ul<<45)
-//(1ul<<46)
+
+#define GPA_PV_INFO_PAGES ((1ul<<46)- (4096 * 1024))
+
+#define DUNE_PV_TLB_IN_HOST 		 0x00000001
+#define DUNE_PV_TLB_FLUSH_ON_REENTRY 0x00000002
+#define DUNE_PV_CHANGE_GUEST_CR3 	 0x00000004
+#define DUNE_PV_FEATURE_MASK (0x0000000000000007UL)
+#define DUNE_PV_CHANGE_GUEST_CR3_MASK (0xFFFFFFFFFFFFFFF8UL)
+#define DUNE_PV_TLB_OFFSET_INTO_PI_PAGE 0
+typedef struct dune_pv_info {
+	__u64 flag;
+}dune_pv_info;
+
+static int dune_pv_info_cmpswap(struct dune_pv_info * info, __u64 old_flag, __u64 new_flag) {
+	return __sync_bool_compare_and_swap(&info->flag, old_flag, new_flag);
+}
 
 #endif /* __ASSEMBLY__ */
 

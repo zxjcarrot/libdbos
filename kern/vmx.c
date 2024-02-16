@@ -77,6 +77,7 @@ typedef struct posted_interrupt_desc {
 } __aligned(64) posted_interrupt_desc;
 
 void *posted_interrupt_desc_region;
+void *tlb_info_region;
 
 static unsigned long *msr_bitmap;
 static void **virtual_apic_pages;
@@ -1292,6 +1293,9 @@ static struct vmx_vcpu *vmx_create_vcpu(struct dune_config *conf)
 	vmx_get_cpu(vcpu);
 	vmx_setup_vmcs(vcpu);
 	vmx_setup_initial_guest_state(conf);
+	printk(KERN_INFO "vmx: creating vcpu with gcr3 %px", conf->cr3);
+
+	vcpu->gcr3 = conf->cr3;
 	vmx_setup_registers(vcpu, conf);
 	vmx_put_cpu(vcpu);
 
@@ -1340,7 +1344,7 @@ void vmx_cleanup(void)
 	struct vmx_vcpu *vcpu, *tmp;
 	int i;
 	list_for_each_entry_safe (vcpu, tmp, &vcpus, list) {
-		printk(KERN_ERR "vmx: destroying VCPU (VPID %d), ept_table_pages %llu, host_4k_pages %llu, host_huge_pages %llu\n", vcpu->vpid, vcpu->pgtbl_pages_created, vcpu->host_4k_pages_connected, vcpu->host_huge_pages_connected);
+		printk(KERN_ERR "vmx: destroying VCPU (VPID %d), queued_interrupts %llu, posted_vector_interrupts %llu, ept_table_pages %llu, host_4k_pages %llu, host_huge_pages %llu\n", vcpu->vpid, vcpu->queued_interrupts, vcpu->posted_vector_interrupts, vcpu->pgtbl_pages_created, vcpu->host_4k_pages_connected, vcpu->host_huge_pages_connected);
 		for (i = 0; i < EXIT_REASON_NOTIFY + 1; ++i) {
 			if (vcpu->exit_count[i] > 0)
 				printk(KERN_ERR "vmx: exit reason %d count %llu\n", i,
@@ -1651,7 +1655,7 @@ static void vmx_handle_syscall(struct vmx_vcpu *vcpu)
 	// 	current->pid, (int)vcpu->regs[VCPU_REGS_RAX], vcpu->regs[VCPU_REGS_RDI],
 	// 	vcpu->regs[VCPU_REGS_RSI], vcpu->regs[VCPU_REGS_RDX],
 	// 	vcpu->regs[VCPU_REGS_R10], vcpu->regs[VCPU_REGS_R8],
-	// 	vcpu->regs[VCPU_REGS_R9], vcpu->regs[VCPU_REGS_RCX]);
+	// 	vcpu->regs[VCPU_REGS_R9], vcpu->regs[VCPU_REGS_RIP]);
 
 	if (unlikely(vcpu->regs[VCPU_REGS_RAX] > NUM_SYSCALLS)) {
 		vmx_get_cpu(vcpu);
@@ -1836,6 +1840,7 @@ static void vmx_handle_external_interrupt(struct vmx_vcpu *vcpu, u32 exit_intr_i
 
 		if (vector == POSTED_INTR_VECTOR) {
 			//TODO: Is this an error case when posted interrupts are enabled?
+			vcpu->posted_vector_interrupts++;
 			apic_write_eoi();
 			return;
 		}
@@ -1907,6 +1912,7 @@ static void vmx_handle_queued_interrupts(struct vmx_vcpu *vcpu)
 
 					//update the value to be written to RVI
 					rvi = rvi > vector ? rvi : vector;
+					vcpu->queued_interrupts++;
 				}
 			}
 		}
@@ -1926,6 +1932,11 @@ int vmx_launch(struct dune_config *conf, int64_t *ret_code)
 	int ret, done = 0;
 	u32 exit_intr_info;
 	bool rescheduled = false;
+	u64 pv_flag = 0;
+	u64 old_pv_flag = 0;
+	u64 new_pv_flag = 0;
+	u64 new_cr3 = 0;
+	u64 old_cr3 = 0;
 	//printk(KERN_ERR "vmx: before vmx_create_vcpu\n");
 	struct vmx_vcpu *vcpu = vmx_create_vcpu(conf);
 	if (!vcpu)
@@ -1967,11 +1978,42 @@ int vmx_launch(struct dune_config *conf, int64_t *ret_code)
 			break;
 		}
 
+		vcpu->pv_info = (struct dune_pv_info*)(((char*)tlb_info_region + PAGE_SIZE * raw_smp_processor_id()) + DUNE_PV_TLB_OFFSET_INTO_PI_PAGE);
+		pv_flag = vcpu->pv_info->flag;
+		BUG_ON(!(pv_flag & DUNE_PV_TLB_IN_HOST));
+
+		// Now we are sure the vCPU will not get rescheduled to another physical core
+		// Clear the in-host bit
+		pv_flag = xchg(&vcpu->pv_info->flag, 0);
+
 		setup_perf_msrs(vcpu);
 		vmx_handle_queued_interrupts(vcpu);
 
+		if (pv_flag & DUNE_PV_TLB_FLUSH_ON_REENTRY) {
+			vpid_sync_context(vcpu->vpid);
+		}
+		if (pv_flag & DUNE_PV_CHANGE_GUEST_CR3) {
+			old_cr3 = vmcs_readl(GUEST_CR3);
+			new_cr3  = (pv_flag & DUNE_PV_CHANGE_GUEST_CR3_MASK);
+			printk(KERN_INFO
+				   "DUNE_PV_CHANGE_GUEST_CR3 old_cr3 %px new_cr3 %px for vcpu %d\n",
+				   old_cr3, new_cr3, vcpu->vpid);
+			vmcs_writel(GUEST_CR3, new_cr3);
+		}
+
+
+		vcpu->mode = IN_GUEST_MODE;
 		ret = vmx_run_vcpu(vcpu);
 		vcpu->mode = IN_HOST_MODE;
+		
+		do {
+			pv_flag = vcpu->pv_info->flag;
+			// Must be in-guest
+			BUG_ON((pv_flag & DUNE_PV_TLB_IN_HOST));
+			// Set the in host bit
+			new_pv_flag = pv_flag  | DUNE_PV_TLB_IN_HOST;
+			old_pv_flag = cmpxchg(&vcpu->pv_info->flag, pv_flag, new_pv_flag);
+		} while(old_pv_flag != pv_flag);
 
 		/* We need to handle NMIs before interrupts are enabled */
 		exit_intr_info = vmcs_read32(VM_EXIT_INTR_INFO);
@@ -1992,8 +2034,20 @@ int vmx_launch(struct dune_config *conf, int64_t *ret_code)
 
 		vmx_put_cpu(vcpu);
 		vcpu->exit_count[ret]++;
-		if (ret == EXIT_REASON_VMCALL)
+		if (ret == EXIT_REASON_VMCALL){
 			vmx_handle_syscall(vcpu);
+			
+			vmx_get_cpu(vcpu);
+			unsigned long gcr3 = vmcs_readl(GUEST_CR3);
+			vmx_put_cpu(vcpu);
+			if (gcr3 != vcpu->gcr3) {
+				printk(KERN_INFO
+				   "new gcr3 %px from vcpu %d, old %px\n",
+				   gcr3, vcpu->vpid, vcpu->gcr3);
+				vcpu->gcr3 = gcr3;
+			}
+			
+		}
 		else if (ret == EXIT_REASON_CPUID)
 			vmx_handle_cpuid(vcpu);
 		else if (ret == EXIT_REASON_EPT_VIOLATION)
@@ -2142,7 +2196,7 @@ static inline int get_log2(int32_t input) {
  */
 __init int vmx_init(void)
 {
-	int r, cpu, order;
+	int r, cpu, order, i;
 
 	// if (!is_vmx_supported()) {
 	// 	printk(KERN_ERR "vmx: CPU does not support VT-x\n");
@@ -2198,6 +2252,13 @@ __init int vmx_init(void)
 	order = get_log2(num_possible_cpus());
 	if (order == -1) return -ENOMEM;
 	posted_interrupt_desc_region = (void *)__get_free_pages(GFP_KERNEL, order);
+
+	tlb_info_region = (void *)__get_free_pages(GFP_KERNEL, order);
+	memset(tlb_info_region, 0, PAGE_SIZE * num_possible_cpus());
+	for (i = 0; i < num_possible_cpus(); ++i) {
+		struct dune_pv_info* tlb_info = (struct dune_pv_info*)(((char*)tlb_info_region + PAGE_SIZE * i) + DUNE_PV_TLB_OFFSET_INTO_PI_PAGE);
+		tlb_info->flag = DUNE_PV_TLB_IN_HOST;
+	}
 
 	for_each_possible_cpu(cpu) {
 		virtual_apic_pages[cpu] = (void *)__get_free_page(GFP_KERNEL);

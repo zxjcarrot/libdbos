@@ -27,6 +27,7 @@ struct vmx_capability {
 
 extern struct vmx_capability vmx_capability;
 extern void *posted_interrupt_desc_region;
+extern void *tlb_info_region;
 
 #define NR_AUTOLOAD_MSRS 8
 
@@ -74,7 +75,7 @@ struct vmx_vcpu {
 	int vpid;
 	int launched;
 	enum vmx_mode mode;
-
+	unsigned long gcr3;
 	struct mmu_notifier mmu_notifier;
 	// spinlock_t ept_lock;
 	// unsigned long ept_root;
@@ -90,6 +91,8 @@ struct vmx_vcpu {
 	u64 pgtbl_pages_created;
 	u64 host_4k_pages_connected;
 	u64 host_huge_pages_connected;
+	u64 queued_interrupts;
+	u64 posted_vector_interrupts;
 	int shutdown;
 	int ret_code;
 	u64 exit_count[EXIT_REASON_NOTIFY + 1];
@@ -104,6 +107,7 @@ struct vmx_vcpu {
 	struct dune_config *conf;
 	unsigned long guest_kernel_gs_base;
 	void *idt_base;
+	struct dune_pv_info* pv_info;
 };
 
 extern __init int vmx_init(void);
