@@ -64,10 +64,12 @@ uint32_t dune_apic_id() {
 
 void dune_setup_apic() {
     size_t size = sizeof(int) * get_nprocs();
-    apic_routing = malloc(size);
+    apic_routing = memalign(PGSIZE, size);
     memset(apic_routing, -1, size);
     asm("mfence" ::: "memory");
     printf("setup_apic for %lu processors\n", size / sizeof(int));
+    int ret = dune_vm_map_pages_add_flags(pgroot, apic_routing, PGSIZE, PERM_NOCOW);
+    assert(ret == 0);
 }
 
 void dune_apic_init_rt_entry() {

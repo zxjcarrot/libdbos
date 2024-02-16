@@ -294,10 +294,45 @@ __dune_syscall:
 	/* handle system calls from G0 */
 	testq $1, %gs:IN_USERMODE
 	jnz 1f
+
+	movq	%rsp, %gs:TMP
+
+	/* now push the trap frame onto the stack */
+	subq	$TF_END, %rsp
+	movq	%rcx, RIP(%rsp)
+	movq	%r11, RFLAGS(%rsp)
+	movq	%r10, R10(%rsp) /* fixup to standard 64-bit calling ABI */
+	movq	%rcx, RCX(%rsp) /* fixup to standard 64-bit calling ABI */
+	SAVE_REGS 0, 1
+	movq	%gs:TMP, %rax
+	movq	%rax, RSP(%rsp)
+
+	/* then finally re-enable interrupts and jump to the handler */
+	sti
+	movq	%rsp, %rdi /* argument 0 */
+	lea	g0_dune_syscall_handler, %rax
+	callq	*%rax
+
+	/* then pop the trap frame off the stack */
+	RESTORE_REGS 0, 1
+	movq	R10(%rsp), %r10
+	movq	RFLAGS(%rsp), %r11
+	movq	RIP(%rsp), %rcx
+
+	/* restore stack pointer */
+	movq	RSP(%rsp), %rsp
+
 	pushq	%r11
 	popfq
-	vmcall
-	jmp	*%rcx # the instruction pointer right after syscall instruction is stored in clobbered in rcx
+
+	jmpq	*%rcx # the instruction pointer right after syscall instruction is stored in clobbered in rcx
+
+; 2: 
+; 	pushq	%r11
+; 	popfq
+; 	vmcall
+; 	jmp	*%rcx # the instruction pointer right after syscall instruction is stored in clobbered in rcx
+
 
 1:
 	/* first switch to the kernel stack */

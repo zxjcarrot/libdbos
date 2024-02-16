@@ -27,6 +27,7 @@
 #include "cpu-x86.h"
 #include "local.h"
 #include "debug.h"
+#include "fast_spawn.h"
 
 #define BUILD_ASSERT(cond)                                                     \
 	do {                                                                       \
@@ -122,7 +123,7 @@ static int setup_safe_stack(struct dune_percpu *percpu)
 	/* changed later on jump to G3 */
 	percpu->tss.tss_rsp[0] = (uintptr_t)safe_stack;
 
-	return 0;
+	return dune_vm_map_pages_add_flags(pgroot, safe_stack, PGSIZE, PERM_NOCOW);
 }
 
 static void setup_gdt(struct dune_percpu *percpu)
@@ -260,27 +261,49 @@ static int setup_syscall(void)
 	for (i = 0; i <= PGSIZE; i += PGSIZE) {
 		uintptr_t pa = dune_mmap_addr_to_pa(page + i);
 		dune_vm_lookup(pgroot, (void *)(lstara + i), 1, &pte);
-		*pte = PTE_ADDR(pa) | PTE_P;
+		*pte = PTE_ADDR(pa) | PTE_P | PTE_NOCOW;
 	}
 
-	return 0;
+	return dune_vm_map_pages_add_flags(pgroot, page, PGSIZE * 2, PERM_NOCOW);
 }
 
 static int setup_apic_mapping(void)
 {
 	map_ptr((void *) APIC_BASE, 0);
+	int ret = dune_vm_map_pages_add_flags(pgroot, APIC_BASE, PGSIZE, PERM_NOCOW);
+	if (ret) {
+		return ret;
+	}
 	return 0;
 }
 
 static int setup_posted_intr_desc_mapping(void)
 {
 	int i;
+	int ret = 0;
 	for (i = 0; i < get_nprocs(); i++) {
 		map_ptr((void *) (POSTED_INTR_DESCS_BASE + (i * PAGE_SIZE)), 0);
+		ret = dune_vm_map_pages_add_flags(pgroot, (void *) (POSTED_INTR_DESCS_BASE + (i * PAGE_SIZE)), PGSIZE, PERM_NOCOW);
+		if (ret) {
+			return ret;
+		}
 	}
 	return 0;
 }
 
+static int setup_tlb_info_page_mapping(void)
+{
+	int i;
+	int ret = 0;
+	for (i = 0; i < get_nprocs(); i++) {
+		map_ptr((void *) (PV_INFO_PAGES_BASE+ (i * PAGE_SIZE)), 0);
+		ret = dune_vm_map_pages_add_flags(pgroot, (void *) (PV_INFO_PAGES_BASE + (i * PAGE_SIZE)), PGSIZE, PERM_NOCOW);
+		if (ret) {
+			return ret;
+		}
+	}
+	return 0;
+}
 #define VSYSCALL_ADDR 0xffffffffff600000
 
 static void setup_vsyscall(void)
@@ -288,14 +311,17 @@ static void setup_vsyscall(void)
 	ptent_t *pte;
 
 	dune_vm_lookup(pgroot, (void *)VSYSCALL_ADDR, 1, &pte);
-	*pte = PTE_ADDR(dune_va_to_pa(&__dune_vsyscall_page)) | PTE_P | PTE_U;
+	*pte = PTE_ADDR(dune_va_to_pa(&__dune_vsyscall_page)) | PTE_P | PTE_U | PTE_NOCOW;
 }
 
 static void __setup_mappings_cb(const struct dune_procmap_entry *ent)
 {
 	int perm = PERM_NONE;
 	int ret;
-
+	printf("dune map [%p, %p] %s\n", ent->begin, ent->end, ent->path);
+	if (strncmp(ent->path, "[heap]", strlen("[heap]")) == 0) {
+		printf("dune map heap [%p, %p]\n", ent->begin, ent->end);
+	}
 	// page region already mapped
 	if (ent->begin == (unsigned long)PAGEBASE)
 		return;
@@ -308,14 +334,14 @@ static void __setup_mappings_cb(const struct dune_procmap_entry *ent)
 	if (ent->type == PROCMAP_TYPE_VDSO) {
 		dune_vm_map_phys(pgroot, (void *)ent->begin, ent->end - ent->begin,
 						 (void *)dune_va_to_pa((void *)ent->begin),
-						 PERM_U | PERM_R | PERM_X);
+						 PERM_U | PERM_R | PERM_X | PERM_NOCOW);
 		return;
 	}
 
 	if (ent->type == PROCMAP_TYPE_VVAR) {
 		dune_vm_map_phys(pgroot, (void *)ent->begin, ent->end - ent->begin,
 						 (void *)dune_va_to_pa((void *)ent->begin),
-						 PERM_U | PERM_R);
+						 PERM_U | PERM_R | PERM_NOCOW);
 		return;
 	}
 
@@ -358,7 +384,10 @@ static void __setup_lib_mappings_cb(const struct dune_procmap_entry *ent)
 		perm |= PERM_W;
 	if (ent->x)
 		perm |= PERM_X;
-
+	if(strlen(ent->path) > 4 && strstr(ent->path, ".so") != NULL) {
+		perm |= PERM_NOCOW;
+		printf("library %s found, disallow copy-on-write\n", ent->path);
+	}
 	ret = dune_vm_map_phys(pgroot, (void *)ent->begin, ent->end - ent->begin,
 						   (void *)dune_va_to_pa((void *)ent->begin), perm);
 	assert(!ret);
@@ -384,14 +413,14 @@ static void setup_vdso_cb(const struct dune_procmap_entry *ent)
 	if (ent->type == PROCMAP_TYPE_VDSO) {
 		dune_vm_map_phys(pgroot, (void *)ent->begin, ent->end - ent->begin,
 						 (void *)dune_va_to_pa((void *)ent->begin),
-						 PERM_U | PERM_R | PERM_X);
+						 PERM_U | PERM_R | PERM_X | PERM_NOCOW);
 		return;
 	}
 
 	if (ent->type == PROCMAP_TYPE_VVAR) {
 		dune_vm_map_phys(pgroot, (void *)ent->begin, ent->end - ent->begin,
 						 (void *)dune_va_to_pa((void *)ent->begin),
-						 PERM_U | PERM_R);
+						 PERM_U | PERM_R | PERM_NOCOW);
 		return;
 	}
 }
@@ -400,11 +429,11 @@ static int __setup_mappings_full(struct dune_layout *layout)
 {
 	int ret;
 
-	ret = dune_vm_map_phys(pgroot, (void *)0, 1UL << 32, (void *)0,
-						   PERM_R | PERM_W | PERM_X | PERM_U);
+	ret = dune_vm_map_phys(pgroot, (void *)0, HEAPEND, (void *)0,
+						   PERM_R | PERM_W | PERM_U);
 	if (ret)
 		return ret;
-	printf("dune: start_v_addr %lx start_p_addr %lx, size %lu MiB\n", 0UL,  0UL, (1UL << 32) / 1024 / 1024);
+	printf("dune: start_v_addr %lx start_p_addr %lx, size %lu MiB\n", 0UL,  0UL, (HEAPEND) / 1024 / 1024);
 
 	//uint64_t map_size = 1ULL << 32;
 	ret =
@@ -418,14 +447,14 @@ static int __setup_mappings_full(struct dune_layout *layout)
 	ret = dune_vm_map_phys(
 		pgroot, (void *)layout->base_stack, GPA_STACK_SIZE,
 		(void *)dune_stack_addr_to_pa((void *)layout->base_stack),
-		PERM_R | PERM_W | PERM_X | PERM_U);
+		PERM_R | PERM_W | PERM_X | PERM_U | PERM_NOCOW);
 	printf("dune: stack_v_addr %lx stack_p_addr %lx, stack_size %lu MiB\n", (uintptr_t)layout->base_stack, dune_stack_addr_to_pa((void *)layout->base_stack), GPA_STACK_SIZE/1024/1024);
 	if (ret)
 		return ret;
 
 	ret = dune_vm_map_phys(pgroot, (void *)PAGEBASE, MAX_PAGES * PGSIZE,
 						   (void *)dune_va_to_pa((void *)PAGEBASE),
-						   PERM_R | PERM_W | PERM_BIG);
+						   PERM_R | PERM_W | PERM_BIG | PERM_NOCOW);
 	if (ret)
 		return ret;
 	printf("dune: pgbase_v_addr %lx pgbase_p_addr [%lx,%lx], PAGE %lu MiB\n", PAGEBASE, dune_va_to_pa((void *)PAGEBASE), dune_va_to_pa((void *)PAGEBASE) + (MAX_PAGES * PGSIZE), (MAX_PAGES * PGSIZE)/1024/1024);
@@ -484,6 +513,11 @@ static struct dune_percpu *create_percpu(void)
 		return NULL;
 	}
 
+	if ((ret = dune_vm_map_pages_add_flags(pgroot, percpu, PGSIZE, PERM_NOCOW))) {
+		assert(false);
+		return NULL;
+	}
+
 	return percpu;
 }
 
@@ -496,7 +530,7 @@ static void free_percpu(struct dune_percpu *percpu)
 static void map_stack_cb(const struct dune_procmap_entry *e)
 {
 	unsigned long esp;
-
+	fast_spawn_state_t * state = NULL;
 	asm("mov %%rsp, %0" : "=r"(esp));
 
 	if (esp >= e->begin && esp < e->end) {
@@ -506,40 +540,38 @@ static void map_stack_cb(const struct dune_procmap_entry *e)
 		unsigned long page_end = PGADDR((char *)p + len);
 		unsigned long l = (page_end - page);
 		void *pg = (void *)page;
-
-		dune_vm_map_phys(pgroot, pg, l, (void *)dune_va_to_pa(pg), PERM_R | PERM_X | PERM_W | PERM_USR4);
+		if (dbos_fast_spawn_enabled) {
+			state = dune_get_fast_spawn_state_host();
+			printf("map_stack_cb dbos_fast_spawn_enabled, state %p\n", state);
+			int cpu_id = dune_get_cpu_id();
+			pthread_mutex_lock(&state->mutex);
+			printf("map_stack_cb dbos_fast_spawn_enabled, state %p, locked\n", state);
+			if (state->shadow_pgroot1 != NULL) {
+				assert(state->shadow_pgroot2);
+				//dune_vm_map_phys(pgroot, pg, l, (void *)dune_va_to_pa(pg), PERM_R | PERM_X | PERM_W | PERM_USR4);
+				dune_vm_map_phys(state->shadow_pgroot1, pg, l, (void *)dune_va_to_pa(pg), PERM_R | PERM_X | PERM_W | PERM_USR4 | PERM_NOCOW);
+				dune_vm_map_phys(state->shadow_pgroot2, pg, l, (void *)dune_va_to_pa(pg), PERM_R | PERM_X | PERM_W | PERM_USR4 | PERM_NOCOW);
+			} else {
+				assert(state->pgroot);
+				//assert(state->pgroot == pgroot);
+				//dune_vm_map_phys(pgroot, pg, l, (void *)dune_va_to_pa(pg), PERM_R | PERM_X | PERM_W | PERM_USR4);
+				dune_vm_map_phys(state->pgroot, pg, l, (void *)dune_va_to_pa(pg), PERM_R | PERM_X | PERM_W | PERM_USR4 | PERM_NOCOW);
+				if (state->pgroot_snapshot) {
+					dune_vm_map_phys(state->pgroot_snapshot, pg, l, (void *)dune_va_to_pa(pg), PERM_R | PERM_X | PERM_W | PERM_USR4 | PERM_NOCOW);
+				}
+			}
+			pthread_mutex_unlock(&state->mutex);
+		} else {
+			dune_vm_map_phys(pgroot, pg, l, (void *)dune_va_to_pa(pg), PERM_R | PERM_X | PERM_W | PERM_USR4 | PERM_NOCOW);
+		}
 		printf("mapped stack [%lx-%lx], page %p, page_end %p, l %lu\n", (uintptr_t)e->begin, (uintptr_t)e->end, page, page_end, l);
 	}
 }
 
-static void map_stack_cb_with_2nd_pgtable(const struct dune_procmap_entry *e, void *arg)
-{
-	unsigned long esp;
-
-	asm("mov %%rsp, %0" : "=r"(esp));
-
-	if (esp >= e->begin && esp < e->end) {
-		void *p = (void *)e->begin;
-		int len = e->end - e->begin;
-		unsigned long page = PGADDR(p);
-		unsigned long page_end = PGADDR((char *)p + len);
-		unsigned long l = (page_end - page);
-		void *pg = (void *)page;
-
-		//dune_vm_map_phys(pgroot, pg, l, (void *)dune_va_to_pa(pg), PERM_R | PERM_X | PERM_W | PERM_USR4);
-		dune_vm_map_phys((ptent_t*)arg, pg, l, (void *)dune_va_to_pa(pg), PERM_R | PERM_X | PERM_W | PERM_USR4);
-		printf("map_stack_cb_with_2nd_pgtable stack [%lx-%lx], page %p, page_end %p, l %lu\n", (uintptr_t)e->begin, (uintptr_t)e->end, page, page_end, l);
-	}
-}
 
 static void map_stack(void)
 {
 	dune_procmap_iterate(map_stack_cb);
-}
-
-void dune_map_stack_with_2nd_pgtable(void* arg)
-{
-	dune_procmap_iterate2(map_stack_cb_with_2nd_pgtable, arg);
 }
 
 static int do_dune_enter(struct dune_percpu *percpu, void * arg)
@@ -547,14 +579,14 @@ static int do_dune_enter(struct dune_percpu *percpu, void * arg)
 	struct dune_config *conf;
 	int ret;
 
-	if (arg) {
-		dune_map_stack_with_2nd_pgtable(arg);
-	} else {
-		map_stack();
+	map_stack();
+
+	conf = memalign(PGSIZE, sizeof(struct dune_config));
+
+	if ((ret = dune_vm_map_pages_add_flags(pgroot, (void*)conf, PGSIZE, PERM_NOCOW))) {
+		printf("dune: entry to Dune mode failed by vm_map, ret is %d\n", ret);
+		return ret;
 	}
-
-	conf = malloc(sizeof(struct dune_config));
-
 	conf->vcpu = 0;
 	conf->rip = (__u64)&__dune_ret;
 	conf->rsp = 0;
@@ -563,7 +595,7 @@ static int do_dune_enter(struct dune_percpu *percpu, void * arg)
 
 	/* NOTE: We don't setup the general purpose registers because __dune_ret
 	 * will restore them as they were before the __dune_enter call */
-	//printf("dune_config at %lx with pgroot %llx\n", (uintptr_t)conf, conf->cr3);
+	printf("dune_config at %lx with pgroot %lu, percpu %p\n", (uintptr_t)conf, conf->cr3, percpu);
 	ret = __dune_enter(dune_fd, conf);
 	if (ret) {
 		printf("dune: entry to Dune mode failed, ret is %d\n", ret);
@@ -712,6 +744,25 @@ int dune_enter_with_2nd_pgtable(void* arg)
 	return 0;
 }
 
+static void dune_default_syscall_handler(struct dune_tf *tf)
+{
+  	int syscall_num = (int) tf->rax;
+	//int cpu_id = dune_get_cpu_id();
+	//dune_printf("Default syscall handler, cpu_id %d got syscall number %d, ip %p\n", cpu_id, syscall_num, tf->rip);
+    dune_passthrough_syscall(tf);
+	//dune_printf("Default syscall handler, cpu_id %d got syscall number %d, done, ret %d\n", cpu_id, syscall_num, tf->rax);
+}
+
+static void dune_default_g0_syscall_handler(struct dune_tf *tf)
+{
+  	int syscall_num = (int) tf->rax;
+	int cpu_id = dune_get_cpu_id();
+	//dune_printf("Default g0 syscall handler, cpu_id %d got syscall number %d, ip %p\n", cpu_id, syscall_num, tf->rip);
+    dune_passthrough_g0_syscall(tf);
+	//dune_printf("back from syscall %d, rip %p\n", syscall_num, tf->rcx);
+	//dune_printf("Default g0 syscall handler, cpu_id %d got syscall number %d, done, ret %d\n", cpu_id, syscall_num, tf->rax);
+}
+
 /**
  * dune_init - initializes libdune
  * 
@@ -762,6 +813,7 @@ int dune_init(bool map_full)
 		goto fail_open;
 	}
 
+	//pgroot = dune_alloc_page_internal();
 	pgroot = memalign(PGSIZE, PGSIZE);
 	if (!pgroot) {
 		ret = -ENOMEM;
@@ -773,6 +825,7 @@ int dune_init(bool map_full)
 		printf("dune: unable to initialize page manager\n");
 		goto err;
 	}
+
 
 	if ((ret = setup_mappings(map_full))) {
 		printf("dune: unable to setup memory layout\n");
@@ -791,6 +844,11 @@ int dune_init(bool map_full)
 
 	if ((ret = setup_posted_intr_desc_mapping())) {
 		printf("dune: unable to setup posted interrupt descriptors mappings\n");
+		goto err;
+	}
+
+	if ((ret = setup_tlb_info_page_mapping())) {
+		printf("dune: unable to setup tlb info page mappings\n");
 		goto err;
 	}
 
@@ -820,6 +878,21 @@ int dune_init(bool map_full)
 
 	dune_setup_apic();
 
+	ret = dune_vm_map_pages_add_flags(pgroot, dune_pmem_alloc_begin(), dune_pmem_alloc_end() - dune_pmem_alloc_begin(), PERM_NOCOW);
+	if (ret != 0) {
+		printf("dune: failed to disable cow for dune allocator memory\n");
+		return ret;
+	}
+
+
+	ret = dune_vm_map_pages_add_flags(pgroot, PAGEBASE, PAGEBASE_END - PAGEBASE, PERM_NOCOW);
+	if (ret != 0) {
+		printf("dune: failed to disable cow for dune kernel memory\n");
+		return ret;
+	}
+
+	dune_register_syscall_handler(dune_default_syscall_handler);
+	dune_register_g0_syscall_handler(dune_default_g0_syscall_handler);
 	return 0;
 
 err:

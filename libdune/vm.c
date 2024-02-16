@@ -310,6 +310,32 @@ int dune_vm_map_phys(ptent_t *root, void *va, size_t len, void *pa, int perm)
 	return 0;
 }
 
+int dune_vm_map_phys_with_pte_flags(ptent_t *root, void *va, size_t len, void *pa, int pte_flags, int perm)
+{
+	int ret;
+	struct map_phys_data data;
+	int create;
+
+	data.perm = pte_flags;
+	data.va_base = (unsigned long)va;
+	data.pa_base = (unsigned long)pa;
+	data.pte_count = 0;
+	if (perm & PERM_BIG)
+		create = CREATE_BIG;
+	else if (perm & PERM_BIG_1GB)
+		create = CREATE_BIG_1GB;
+	else
+		create = CREATE_NORMAL;
+
+	ret =
+		__dune_vm_page_walk(root, va, va + len - 1, &__dune_vm_map_phys_helper,
+							(void *)&data, 3, create);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
 static int __dune_vm_map_pages_helper(const void *arg, ptent_t *pte, void *va, int level)
 {
 	ptent_t perm = (ptent_t)arg;
@@ -321,6 +347,34 @@ static int __dune_vm_map_pages_helper(const void *arg, ptent_t *pte, void *va, i
 	*pte = PTE_ADDR(dune_page2pa(pg)) | perm;
 
 	return 0;
+}
+
+static int __dune_vm_map_pages_add_flags_helper(const void *arg, ptent_t *pte, void *va, int level)
+{
+	ptent_t flags = (ptent_t)arg;
+	struct page *pg = dune_page_alloc();
+
+	if (!pg)
+		return -ENOMEM;
+
+	*pte |= flags;
+
+	return 0;
+}
+
+
+int dune_vm_map_pages_add_flags(ptent_t *root, void *va, size_t len, int perm)
+{
+	int ret;
+	ptent_t pte_perm;
+
+	pte_perm = get_pte_perm(perm);
+
+	ret =
+		__dune_vm_page_walk(root, va, va + len - 1, &__dune_vm_map_pages_add_flags_helper,
+							(void *)pte_perm, 3, CREATE_NONE);
+
+	return ret;
 }
 
 int dune_vm_map_pages(ptent_t *root, void *va, size_t len, int perm)
@@ -340,6 +394,49 @@ int dune_vm_map_pages(ptent_t *root, void *va, size_t len, int perm)
 	return ret;
 }
 
+
+uint64_t pgsize(int level) {
+	if (level == 0) return PGSIZE;
+	else if (level == 1) return PGSIZE * 512UL;
+	else if (level == 2) return PGSIZE * 512UL * 512UL;
+	assert(false);
+
+	return -1;
+}
+int pteflags_to_perm(uint64_t pte_flags, int level)
+{
+	int perm = 0;
+
+	if (pte_flags & PTE_P)
+		perm |= PERM_R;
+	if (pte_flags & PTE_W)
+		perm |= PERM_W;
+	if (!(pte_flags & PTE_NX))
+		perm |= PERM_X;
+	if (pte_flags & PTE_U)
+		perm |= PERM_U;
+	if (pte_flags & PTE_PCD)
+		perm |= PERM_UC;
+	if (pte_flags & PTE_COW)
+		perm |= PERM_COW;
+	if (pte_flags & PTE_USR1)
+		perm |= PERM_USR1;
+	if (pte_flags & PTE_USR2)
+		perm |= PERM_USR2;
+	if (pte_flags & PTE_USR3)
+		perm |= PERM_USR3;
+	if (pte_flags & PTE_STACK)
+		perm |= PERM_USR4;
+	if ((pte_flags & PTE_PS) && level == 1)
+		perm |= PERM_BIG;
+	if ((pte_flags & PTE_PS) && level == 2)
+		perm |= PERM_BIG_1GB;
+
+	return perm;
+}
+
+
+
 static int __dune_vm_clone_helper(const void *arg, ptent_t *pte, void *va, int level)
 {
 	int ret;
@@ -347,15 +444,34 @@ static int __dune_vm_clone_helper(const void *arg, ptent_t *pte, void *va, int l
 	ptent_t *newRoot = (ptent_t *)arg;
 	ptent_t *newPte;
 
-	ret = dune_vm_lookup(newRoot, va, CREATE_NORMAL, &newPte);
-	if (ret < 0)
+	int create_perm = 0;
+	if (level == 0) {
+		assert(!pte_big(*pte));
+		create_perm = PERM_NONE;
+	} else if (level == 1 ) {
+		create_perm = PERM_BIG;
+		assert(pte_big(*pte));
+	} else {
+		assert(level == 2);
+		assert(pte_big(*pte));
+		create_perm = PERM_BIG_1GB;
+	}
+	ret = dune_vm_map_phys_with_pte_flags(newRoot, va, pgsize(level), PTE_ADDR(*pte), PTE_FLAGS(*pte), create_perm);
+	
+	if (ret != 0) {
 		return ret;
+	}
+	// bool created = false;
+	// ret = dune_vm_lookup(newRoot, va, create, created, &newPte);
+	// if (ret < 0)
+	// 	return ret;
+	// assert(created);
 
 	if (dune_page_isfrompool(PTE_ADDR(*pte)))
 		dune_page_get(pg);
-	*newPte = *pte;
+	//*newPte = *pte;
 
-	return 0;
+	return ret;
 }
 
 /**

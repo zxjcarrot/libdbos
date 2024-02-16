@@ -63,6 +63,7 @@
 #define PTE_USR1 UINT64(0x4000000000000000) /* Reserved for user software */
 #define PTE_USR2 UINT64(0x2000000000000000) /* Reserved for user software */
 #define PTE_USR3 UINT64(0x1000000000000000) /* Reserved for user software */
+#define PTE_NOCOW PTE_USR3 /* Reserved for user software */
 
 /* address in page table entry */
 #define PTE_ADDR(pte)  ((physaddr_t)(pte)&UINT64(0xffffffffff000))

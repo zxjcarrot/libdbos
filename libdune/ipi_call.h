@@ -6,6 +6,8 @@
 
 #include "dune.h"
 
+#include "../kern/dune.h"
+
 #define IPI_INVALID_NUMBER (0xffffffffffffffffULL)
 #define IPI_VECTOR 0xf2
 #define IPI_MAX_CPUS 128
@@ -51,7 +53,7 @@ typedef struct ipi_percpu_ring_t {
 #define IPI_ADDR_WORKING_MEM_BASE IPI_ADDR_RING_END
 #define IPI_ADDR_WORKING_MEM_END (IPI_ADDR_WORKING_MEM_BASE + IPI_MAX_CPUS * PAGE_SIZE)
 #define IPI_ADDR_SHARED_STATE_BASE (IPI_ADDR_WORKING_MEM_END) // states shared by all vCPUs
-#define IPI_ADDR_SHARED_STATE_END (IPI_ADDR_WORKING_MEM_END + PGSIZE)
+#define IPI_ADDR_SHARED_STATE_END (IPI_ADDR_SHARED_STATE_BASE + PGSIZE * 10)
 
 extern int dune_queued_ipi_phase(int target_core);
 extern bool dune_ipi_call_number_collected(int source_core, int target_core, uint64_t call_num);
@@ -65,8 +67,10 @@ extern void dune_send_ipi(int src_core, int target_core);
 extern int dune_ipi_init();
 extern uint64_t dune_collect_ipi_messages(int target_core, int src_core, ipi_message_t* msgs);
 extern char* dune_ipi_shared_state_page();
+extern char* dune_ipi_shared_state_page_nonvirt();
 extern char* dune_ipi_percpu_working_page(int core_id);
 extern void dune_ipi_set_cpu_id(int cpuid);
 extern int dune_ipi_get_cpu_id();
 extern void dune_ipi_print_stats();
 extern void dune_register_ipi_batch_call(ipi_call_batch_func_t func);
+extern struct dune_pv_info * dune_pv_info_for_core(uint32_t core);

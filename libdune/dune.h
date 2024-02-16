@@ -139,9 +139,10 @@ struct page {
 	uint64_t ref;
 };
 
-#define PAGEBASE  0x200000000
-#define MAX_PAGES (1ul << 22) /* 4 GB of memory */
-#define PAGEBASE_END  (0x200000000 + (MAX_PAGES * PGSIZE))
+#define PAGEBASE  UINT64(0x1000000000UL)
+#define MAX_PAGES UINT64((1ul << 24)) /* 64 GB of memory */
+#define PAGEBASE_END UINT64(PAGEBASE + (MAX_PAGES * PGSIZE))
+#define HEAPEND UINT64(PAGEBASE)
 
 extern void dune_set_max_cores(int n);
 extern uintptr_t dune_pmem_alloc_begin();
@@ -170,8 +171,9 @@ extern uintptr_t stack_base;
 //TODO: Can I get rid of this constant?
 #define PAGE_SIZE 4096
 
-#define APIC_BASE 0xfffffffffffff000
-#define POSTED_INTR_DESCS_BASE (1ul<<45)
+#define APIC_BASE UINT64(0xfffffffffffff000UL)
+#define POSTED_INTR_DESCS_BASE UINT64(GPA_POSTED_INTR_DESCS)
+#define PV_INFO_PAGES_BASE UINT64(GPA_PV_INFO_PAGES)
 
 static inline uintptr_t dune_mmap_addr_to_pa(void *ptr)
 {
@@ -192,6 +194,10 @@ static inline uintptr_t dune_va_to_pa(void *ptr)
 	    PGADDR(ptr) <  POSTED_INTR_DESCS_BASE + (256 * PAGE_SIZE)) {
 		return GPA_POSTED_INTR_DESCS + (PGADDR(ptr) - POSTED_INTR_DESCS_BASE);
 	}
+	if (PGADDR(ptr) >= PV_INFO_PAGES_BASE &&
+	    PGADDR(ptr) <  PV_INFO_PAGES_BASE + (256 * PAGE_SIZE)) {
+		return GPA_PV_INFO_PAGES + (PGADDR(ptr) - PV_INFO_PAGES_BASE);
+	}
 	if ((uintptr_t)ptr >= stack_base)
 		return dune_stack_addr_to_pa(ptr);
 	else if ((uintptr_t)ptr >= mmap_base)
@@ -209,8 +215,9 @@ static inline uintptr_t dune_va_to_pa(void *ptr)
 #define PERM_COW	 0x0020 /* COW flag */
 #define PERM_USR1	 0x1000 /* User flag 1 */
 #define PERM_USR2	 0x2000 /* User flag 2 */
-#define PERM_USR3	 0x3000 /* User flag 3 */
-#define PERM_USR4	 0x4000 /* User flag 4 */
+#define PERM_USR3	 0x4000 /* User flag 3 */
+#define PERM_USR4	 0x8000 /* User flag 4 */
+#define PERM_NOCOW   PERM_USR3
 #define PERM_BIG	 0x0100 /* Use large pages */
 #define PERM_BIG_1GB 0x0200 /* Use large pages (1GB) */
 
@@ -265,7 +272,9 @@ enum {
 extern int dune_vm_mprotect(ptent_t *root, void *va, size_t len, int perm);
 extern int dune_vm_map_phys(ptent_t *root, void *va, size_t len, void *pa,
 							int perm);
+extern int dune_vm_map_phys_with_pte_flags(ptent_t *root, void *va, size_t len, void *pa, int pte_flags, int perm);
 extern int dune_vm_map_pages(ptent_t *root, void *va, size_t len, int perm);
+extern int dune_vm_map_pages_add_flags(ptent_t *root, void *va, size_t len, int perm);
 extern void dune_vm_unmap(ptent_t *root, void *va, size_t len);
 extern int dune_vm_lookup(ptent_t *root, void *va, int create,
 						  ptent_t **pte_out);

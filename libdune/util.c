@@ -13,6 +13,7 @@
 static int dune_puts(const char *buf)
 {
 	long ret;
+	//uint64_t cr3 = read_cr3();
 
 	asm volatile("movq $1, %%rax \n\t" // SYS_write
 				 "movq $1, %%rdi \n\t" // STDOUT
@@ -98,6 +99,33 @@ void dune_passthrough_syscall(struct dune_tf *tf)
 				 : "a"(tf->rax), "r"(tf->rdi), "r"(tf->rsi), "r"(tf->rdx),
 				   "r"(tf->rcx), "r"(tf->r8), "r"(tf->r9)
 				 : "rdi", "rsi", "rdx", "r10", "r8", "r9", "memory");
+}
+
+/**
+ * dune_passthrough_g0_syscall - makes a syscall using the args of a trap frame
+ *
+ * @tf: the trap frame to apply
+ * 
+ * sets the return code in tf->rax
+ */
+void dune_passthrough_g0_syscall(struct dune_tf *tf)
+{
+	asm volatile("movq %2, %%rdi \n\t"
+				 "movq %3, %%rsi \n\t"
+				 "movq %4, %%rdx \n\t"
+				 "movq %5, %%r10 \n\t"
+				 "movq %6, %%r8 \n\t"
+				 "movq %7, %%r9 \n\t"
+				 "movq %8, %%rcx \n\t"
+				//  "movq %9, %%r11 \n\t"
+				//  "pushq %%r11 \n\t"
+				//  "popfq \n\t"
+				 "vmcall \n\t"
+				 "movq %%rax, %0 \n\t"
+				 : "=a"(tf->rax)
+				 : "a"(tf->rax), "r"(tf->rdi), "r"(tf->rsi), "r"(tf->rdx),
+				   "r"(tf->r10), "r"(tf->r8), "r"(tf->r9), "r"(tf->rcx)
+				 : "rdi", "rsi", "rdx", "r10", "r8", "r9", "rcx", "memory");
 }
 
 sighandler_t dune_signal(int sig, sighandler_t cb)

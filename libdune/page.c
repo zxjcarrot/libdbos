@@ -13,7 +13,7 @@
 #include <stdio.h>
 #include "dune.h"
 
-#define GROW_SIZE 512
+#define GROW_SIZE (512)
 
 #define NUM_GLOBAL_LISTS 128
 typedef struct freelist {
@@ -34,12 +34,6 @@ typedef struct physical_page_allocator_t {
 static physical_page_allocator_t *p_allocator;
 static uintptr_t p_allocator_begin;
 static uintptr_t p_allocator_end;
-static int max_n_cores = 32; // maximum number of cores used by the application
-
-void dune_set_max_cores(int n) {
-	assert(n <= NUM_GLOBAL_LISTS)
-	max_n_cores = n;
-}
 
 uintptr_t dune_pmem_alloc_begin()
 {
@@ -225,9 +219,9 @@ struct page *dune_page_alloc(void)
 	int steal_attempts = 0;
 	retry:
 	if (steal_attempts > 100000) {
-		// printf(
-		// 	"dune_page_alloc failed to allocate a page after %d failed stealing attempts\n",
-		// 	steal_attempts);
+		printf(
+			"dune_page_alloc failed to allocate a page after %d failed stealing attempts\n",
+			steal_attempts);
 		return NULL;
 	}
 	static __thread int last_stealed = -1;
@@ -242,7 +236,7 @@ struct page *dune_page_alloc(void)
 		if (grow_size(cpu_id)) {
 			// now try stealing from other local lists
 			if (last_stealed == -1) {
-				last_stealed = rand_number() % (NUM_GLOBAL_LISTS - max_n_cores) + max_n_cores;
+				last_stealed = rand_number() % (NUM_GLOBAL_LISTS - dune_get_max_cores()) + dune_get_max_cores();
 				assert(last_stealed < NUM_GLOBAL_LISTS);
 			}
 			++steal_attempts;
@@ -250,7 +244,7 @@ struct page *dune_page_alloc(void)
 				// stealing failed, retry again
 				last_stealed = -1;
 			} else {
-				//printf("cpu %d stolen %lu pages from cpu %d, max_n_cores %d\n", cpu_id, GROW_SIZE, last_stealed, max_n_cores);
+				//printf("cpu %d stolen %lu pages from cpu %d\n", cpu_id, GROW_SIZE, last_stealed);
 			}
 			pthread_mutex_unlock(&p_allocator->local_lists[cpu_id].page_mutex);
 			//return NULL;

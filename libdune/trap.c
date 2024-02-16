@@ -10,6 +10,7 @@
 #include "cpu-x86.h"
 
 static dune_syscall_cb syscall_cb;
+static dune_syscall_cb g0_syscall_cb;
 static dune_pgflt_cb pgflt_cb;
 static dune_intr_cb intr_cbs[IDT_ENTRIES];
 __thread uint64_t interrupt_ts;
@@ -45,6 +46,12 @@ void dune_register_syscall_handler(dune_syscall_cb cb)
 {
 	syscall_cb = cb;
 }
+
+void dune_register_g0_syscall_handler(dune_syscall_cb cb)
+{
+	g0_syscall_cb = cb;
+}
+
 
 void dune_register_pgflt_handler(dune_pgflt_cb cb)
 {
@@ -141,6 +148,17 @@ void dune_dump_trap_frame(struct dune_tf *tf)
 	dune_printf("dune: --- End Trap Dump ---\n");
 }
 
+void g0_dune_syscall_handler(struct dune_tf *tf)
+{
+	if (g0_syscall_cb) {
+		g0_syscall_cb(tf);
+	} else {
+		dune_printf("missing g0 handler for system call - #%d\n", tf->rax);
+		dune_dump_trap_frame(tf);
+		dune_die();
+	}
+}
+
 void dune_syscall_handler(struct dune_tf *tf)
 {
 	if (syscall_cb) {
@@ -148,9 +166,7 @@ void dune_syscall_handler(struct dune_tf *tf)
 	} else {
 		dune_printf("missing handler for system call - #%d\n", tf->rax);
 		dune_dump_trap_frame(tf);
-		//dune_die();
-		asm volatile("movq $60, %rax\n" // exit
-				 "vmcall\n");
+		dune_die();
 	}
 }
 
@@ -180,8 +196,8 @@ void dune_trap_handler(int num, struct dune_tf *tf)
 		} else {
 			//printf("unhandled page fault %lx %lx\n", read_cr2(), tf->err);
 			dune_printf("unhandled page fault %lx %lx sp %lx rip %lx\n", read_cr2(), tf->err, tf->rsp, tf->rip);
-			//dune_procmap_dump();
-			//dune_dump_trap_frame(tf);
+			dune_dump_trap_frame(tf);
+			dune_procmap_dump();
 			dune_die();
 			// asm volatile("movq $60, %rax\n" // exit
 			// 	 "vmcall\n");
