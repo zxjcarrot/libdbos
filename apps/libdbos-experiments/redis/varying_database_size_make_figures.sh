@@ -1,0 +1,10 @@
+#!/bin/bash
+
+python3 varying_database_size.py --data_file_prefixes="/localpv/zxj/dune/apps/libdbos-experiments/redis/data/redis_dbos_database_size_dbsize_,/localpv/zxj/dune/apps/libdbos-experiments/redis/data/redis_linux_database_size_dbsize_,/localpv/zxj/dune/apps/libdbos-experiments/redis/data/redis_odf_database_size_dbsize_"  --size_suffixes="0,1,3,6,12,25" --line_names="Instantaneous Snapshot,Linux Fork,On-Demand-Fork" --metric_name="p95.00" --figure_filename="p95-latency-varying-database-size"
+
+python3 varying_database_size.py --data_file_prefixes="/localpv/zxj/dune/apps/libdbos-experiments/redis/data/redis_dbos_database_size_dbsize_,/localpv/zxj/dune/apps/libdbos-experiments/redis/data/redis_linux_database_size_dbsize_,/localpv/zxj/dune/apps/libdbos-experiments/redis/data/redis_odf_database_size_dbsize_"  --size_suffixes="0,1,3,6,12,25" --line_names="Instantaneous Snapshot,Linux Fork,On-Demand-Fork" --metric_name="p99.00" --figure_filename="p99-latency-varying-database-size"
+
+python3 varying_database_size.py --data_file_prefixes="/localpv/zxj/dune/apps/libdbos-experiments/redis/data/redis_dbos_database_size_dbsize_,/localpv/zxj/dune/apps/libdbos-experiments/redis/data/redis_linux_database_size_dbsize_,/localpv/zxj/dune/apps/libdbos-experiments/redis/data/redis_odf_database_size_dbsize_"  --size_suffixes="0,1,3,6,12,25" --line_names="Instantaneous Snapshot,Linux Fork,On-Demand-Fork" --metric_name="p99.90" --figure_filename="p999-latency-varying-database-size"
+
+
+python3 varying_database_size.py --data_file_prefixes="/localpv/zxj/dune/apps/libdbos-experiments/redis/data/redis_dbos_database_size_dbsize_,/localpv/zxj/dune/apps/libdbos-experiments/redis/data/redis_linux_database_size_dbsize_,/localpv/zxj/dune/apps/libdbos-experiments/redis/data/redis_odf_database_size_dbsize_"  --size_suffixes="0,1,3,6,12,25" --line_names="Instantaneous Snapshot,Linux Fork,On-Demand-Fork" --metric_name="p100.0" --figure_filename="p100-latency-varying-database-size"
