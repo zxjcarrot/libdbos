@@ -9,9 +9,9 @@
 #include "../kern/dune.h"
 
 #define IPI_INVALID_NUMBER (0xffffffffffffffffULL)
-#define IPI_VECTOR 0xf2
+#define IPI_VECTOR 0xf1
 #define IPI_MAX_CPUS 128
-#define IPI_MESSAGE_RINGBUF_SIZE 2
+#define IPI_MESSAGE_RINGBUF_SIZE 4
 
 typedef void (*ipi_call_func_t)(void*);
 

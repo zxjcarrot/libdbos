@@ -429,7 +429,7 @@ static int __setup_mappings_full(struct dune_layout *layout)
 {
 	int ret;
 
-	ret = dune_vm_map_phys(pgroot, (void *)0, HEAPEND, (void *)0,
+	ret = dune_vm_map_phys(pgroot, (void *)0, HEAPEND / 4, (void *)0,
 						   PERM_R | PERM_W | PERM_U);
 	if (ret)
 		return ret;
@@ -753,14 +753,15 @@ static void dune_default_syscall_handler(struct dune_tf *tf)
 	//dune_printf("Default syscall handler, cpu_id %d got syscall number %d, done, ret %d\n", cpu_id, syscall_num, tf->rax);
 }
 
+int dune_cnt = 0;
 static void dune_default_g0_syscall_handler(struct dune_tf *tf)
 {
   	int syscall_num = (int) tf->rax;
 	int cpu_id = dune_get_cpu_id();
-	//dune_printf("Default g0 syscall handler, cpu_id %d got syscall number %d, ip %p\n", cpu_id, syscall_num, tf->rip);
+	if (syscall_num == 9) {
+		dune_printf("got mmap(addr=%lx, length=%lx, prot=%lx, flags=%lx, fd=%lx, offset=%lx), hugetlb?%s\n", tf->rdi, tf->rsi, tf->rdx, tf->r10, tf->r8, tf->r9, (tf->r10 & MAP_HUGETLB) ? "yes" : "no");
+	}
     dune_passthrough_g0_syscall(tf);
-	//dune_printf("back from syscall %d, rip %p\n", syscall_num, tf->rcx);
-	//dune_printf("Default g0 syscall handler, cpu_id %d got syscall number %d, done, ret %d\n", cpu_id, syscall_num, tf->rax);
 }
 
 /**

@@ -74,6 +74,8 @@ struct vmx_vcpu {
 	int cpu;
 	int vpid;
 	int launched;
+	int reschedule_count;
+	int physical_processor_change;
 	enum vmx_mode mode;
 	unsigned long gcr3;
 	struct mmu_notifier mmu_notifier;

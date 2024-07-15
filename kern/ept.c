@@ -533,7 +533,7 @@ static int ept_set_pfnmap_epte(struct vmx_vcpu *vcpu, int make_write,
 		return -EFAULT;
 	}
 
-	printk(KERN_ERR "ept_set_pfnmap_epte: %lx (vma->vm_flags & (VM_IO | VM_PFNMAP)) \n", vm_flags);
+	printk(KERN_ERR "ept_set_pfnmap_epte: %lx (vma->vm_flags & (VM_IO | VM_PFNMAP)), gpa %lx, hva %lx \n", vm_flags, gpa, hva);
 	while ((ret = hva_to_pfn_remapped(vma, hva, make_write, &pfn)) == -EAGAIN)
 		;
 	//ret = follow_pfn(vma, hva, &pfn);
@@ -590,6 +590,23 @@ static int ept_set_epte(struct vmx_vcpu *vcpu, int make_write, unsigned long gva
 	int level;
 	unsigned long grip = 0;
 	int was_present = 0;
+	struct vm_area_struct *vma;
+	struct mm_struct *mm = current->mm;
+
+	if (!((gpa & PAGE_MASK) == GPA_APIC_PAGE || (gpa & PAGE_MASK) >= GPA_POSTED_INTR_DESCS &&
+            (gpa & PAGE_MASK) <  GPA_POSTED_INTR_DESCS + (PAGE_SIZE * num_possible_cpus()) || (gpa & PAGE_MASK) >= GPA_PV_INFO_PAGES &&
+            (gpa & PAGE_MASK) <  GPA_PV_INFO_PAGES + (PAGE_SIZE * num_possible_cpus()))) {
+		down_read(&mm->mmap_sem);
+		vma = find_vma(mm, hva);
+		if (!vma) {
+			up_read(&mm->mmap_sem);
+			return -EFAULT;
+		}
+		if (vma_is_anonymous(vma) && !(vma->vm_flags & (VM_IO | VM_PFNMAP))) {
+			make_write = 1;
+		}
+		up_read(&mm->mmap_sem);
+	}
 
 	// Pages will be faulted in here if not backed by any physical memory.
 	ret = get_user_pages_fast(hva, 1, make_write, &page);

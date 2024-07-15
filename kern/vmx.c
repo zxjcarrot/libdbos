@@ -51,6 +51,7 @@
 #include <linux/percpu.h>
 #include <linux/syscalls.h>
 #include <linux/version.h>
+#include <trace/events/ipi.h>
 
 #include <asm/desc.h>
 #include <asm/vmx.h>
@@ -65,7 +66,7 @@
 #include "compat.h"
 
 static atomic_t vmx_enable_failed;
-
+static int dune_record_stat = 0;
 static struct vmx_common * vmx_instance = NULL;
 
 static DECLARE_BITMAP(vmx_vpid_bitmap, VMX_NR_VPIDS);
@@ -1344,7 +1345,7 @@ void vmx_cleanup(void)
 	struct vmx_vcpu *vcpu, *tmp;
 	int i;
 	list_for_each_entry_safe (vcpu, tmp, &vcpus, list) {
-		printk(KERN_ERR "vmx: destroying VCPU (VPID %d), queued_interrupts %llu, posted_vector_interrupts %llu, ept_table_pages %llu, host_4k_pages %llu, host_huge_pages %llu\n", vcpu->vpid, vcpu->queued_interrupts, vcpu->posted_vector_interrupts, vcpu->pgtbl_pages_created, vcpu->host_4k_pages_connected, vcpu->host_huge_pages_connected);
+		printk(KERN_ERR "vmx: destroying VCPU (VPID %d), queued_interrupts %llu, posted_vector_interrupts %llu, ept_table_pages %llu, host_4k_pages %llu, host_huge_pages %llu, reschedule_count %d, pcpu_change %d\n", vcpu->vpid, vcpu->queued_interrupts, vcpu->posted_vector_interrupts, vcpu->pgtbl_pages_created, vcpu->host_4k_pages_connected, vcpu->host_huge_pages_connected, vcpu->reschedule_count, vcpu->physical_processor_change);
 		for (i = 0; i < EXIT_REASON_NOTIFY + 1; ++i) {
 			if (vcpu->exit_count[i] > 0)
 				printk(KERN_ERR "vmx: exit reason %d count %llu\n", i,
@@ -1626,9 +1627,13 @@ static int vmx_handle_ept_violation(struct vmx_vcpu *vcpu)
 		printk(KERN_ERR "EPT: linear address is not valid, GPA: 0x%lx!\n", gpa);
 		return -EINVAL;
 	}
-
 	ret = vmx_do_ept_fault(vcpu, gpa, gva, exit_qual);
 
+	// if (dune_record_stat) {
+	// 	printk(KERN_INFO "vmx: page fault from vcpu %d "
+	// 					"GPA: 0x%lx, GVA: 0x%lx exit_qual: %x, vmx_do_ept_fault ret %d\n",
+	// 		   vcpu->vpid, gpa, gva, exit_qual, ret);
+	// }
 	if (ret) {
 		printk(KERN_ERR "vmx: page fault failure "
 						"GPA: 0x%lx, GVA: 0x%lx exit_qual: %x\n",
@@ -1648,6 +1653,9 @@ static void vmx_handle_syscall(struct vmx_vcpu *vcpu)
 	__u64 vrsp;
 	__u64 orig_rax;
 	long ret;
+	__u64 rdi;
+	int me;
+	int cpu;
 
 	// printk(
 	// 	KERN_ERR
@@ -1656,6 +1664,30 @@ static void vmx_handle_syscall(struct vmx_vcpu *vcpu)
 	// 	vcpu->regs[VCPU_REGS_RSI], vcpu->regs[VCPU_REGS_RDX],
 	// 	vcpu->regs[VCPU_REGS_R10], vcpu->regs[VCPU_REGS_R8],
 	// 	vcpu->regs[VCPU_REGS_R9], vcpu->regs[VCPU_REGS_RIP]);
+	if (vcpu->regs[VCPU_REGS_RAX] == 801) {
+		printk(KERN_INFO, "dune enabled stats recording");
+		dune_record_stat = 1;
+		vcpu->regs[VCPU_REGS_RAX] = 0; // ret val
+		return;
+	}
+	if (vcpu->regs[VCPU_REGS_RAX] == 802) {
+		printk(KERN_INFO, "dune disabled stats recording");
+		dune_record_stat = 0;
+		vcpu->regs[VCPU_REGS_RAX] = 0; // ret val
+		return;
+	}
+	if (vcpu->regs[VCPU_REGS_RAX] == 800) {
+		rdi = vcpu->regs[VCPU_REGS_RDI];
+		cpu = rdi;
+		me = get_cpu();
+		// Bring the CPU back to Host Mode by sending a IPI
+		if (cpu != me && (unsigned)cpu < nr_cpu_ids && cpu_online(cpu)){
+			smp_send_reschedule(cpu);
+		}
+		put_cpu();
+		vcpu->regs[VCPU_REGS_RAX] = 0; // ret val
+		return;
+	}
 
 	if (unlikely(vcpu->regs[VCPU_REGS_RAX] > NUM_SYSCALLS)) {
 		vmx_get_cpu(vcpu);
@@ -1937,6 +1969,7 @@ int vmx_launch(struct dune_config *conf, int64_t *ret_code)
 	u64 new_pv_flag = 0;
 	u64 new_cr3 = 0;
 	u64 old_cr3 = 0;
+	int old_processor_id = raw_smp_processor_id();
 	//printk(KERN_ERR "vmx: before vmx_create_vcpu\n");
 	struct vmx_vcpu *vcpu = vmx_create_vcpu(conf);
 	if (!vcpu)
@@ -1947,6 +1980,11 @@ int vmx_launch(struct dune_config *conf, int64_t *ret_code)
 	while (1) {
 		vmx_get_cpu(vcpu);
 		if (rescheduled) {
+			if (old_processor_id != raw_smp_processor_id()) {
+				vcpu->physical_processor_change++;
+			}
+			old_processor_id = raw_smp_processor_id();
+			vcpu->reschedule_count++;
 			update_vapic_addresses(vcpu);
 			rescheduled = false;
 		}
@@ -1985,11 +2023,11 @@ int vmx_launch(struct dune_config *conf, int64_t *ret_code)
 		// Now we are sure the vCPU will not get rescheduled to another physical core
 		// Clear the in-host bit
 		pv_flag = xchg(&vcpu->pv_info->flag, 0);
-
+		
 		setup_perf_msrs(vcpu);
-		vmx_handle_queued_interrupts(vcpu);
 
 		if (pv_flag & DUNE_PV_TLB_FLUSH_ON_REENTRY) {
+			atomic_inc((atomic_t*)&vcpu->pv_info->full_flush_count);
 			vpid_sync_context(vcpu->vpid);
 		}
 		if (pv_flag & DUNE_PV_CHANGE_GUEST_CR3) {
@@ -2001,6 +2039,7 @@ int vmx_launch(struct dune_config *conf, int64_t *ret_code)
 			vmcs_writel(GUEST_CR3, new_cr3);
 		}
 
+		vmx_handle_queued_interrupts(vcpu);
 
 		vcpu->mode = IN_GUEST_MODE;
 		ret = vmx_run_vcpu(vcpu);

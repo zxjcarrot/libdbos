@@ -9,8 +9,25 @@ typedef enum thread_state {
 	DUNE_THREAD_PGTBL_COPY = 3
 }thread_state;
 
+
+struct dbos_snapshot;
+typedef SLIST_ENTRY(dbos_snapshot) dbos_snapshot_entry_t;
+
+struct dbos_snapshot {
+	ptent_t * snapshot_table;
+	uint64_t epoch;
+	int active;
+};
+
+SLIST_HEAD(dbos_snapshot_head, dbos_snapshot);
+
 #define DUNE_FAST_COW_STAGING_BUFFER_SIZE (5 * 1024 * 1024)
 typedef struct fast_spawn_state_t {
+	#define MAX_SNAPSHOTS 32
+	struct dbos_snapshot snapshots[MAX_SNAPSHOTS];
+	uint64_t num_snapshots;
+	uint64_t E_global;
+
 	ptent_t *pgroot;
 	ptent_t *shadow_pgroot1; // one for main CPUs
 	ptent_t *shadow_pgroot2; // one for snapshot
@@ -32,6 +49,7 @@ typedef struct fast_spawn_state_t {
 	uint64_t shootdowns[128];
 	uint64_t interrupt_ts[128];
 	uint64_t cycles_spent_for_shootdown[128];
+	uint64_t ipi_call_queue_full[128];
 	uint64_t cycles_spent_in_flt[128];
 	uint64_t write_calls[128];
 	uint64_t syscalls[128];
@@ -60,6 +78,6 @@ extern thread_state dune_get_thread_state(fast_spawn_state_t * state, int cpu_id
 extern void dune_fast_spawn_on_snapshot(void* (*snapshot_worker)(void*), void * arg);
 extern bool dune_fast_spawn_snapshot_running();
 extern void dune_fast_spawn_configure();
-extern int dune_fast_spawn_init();
+extern int dune_fast_spawn_init(int selective_TLB_shootdown);
 extern void dune_fast_spawn_signal_copy_worker();
 extern int pgtable_set_cow(const void *arg, ptent_t *pte, void *va, int level);

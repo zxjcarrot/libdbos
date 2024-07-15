@@ -22,3 +22,18 @@ void dune_set_max_cores(int n) {
 int dune_get_max_cores() {
     return	max_n_cores;
 }
+
+void dune_pv_kick(int cpu) {
+    int ret = syscall(800, cpu);
+    assert(ret == 0);
+}
+
+void dune_pv_enable_record_stats(int cpu) {
+    int ret = syscall(801);
+    assert(ret == 0);
+}
+
+void dune_pv_disable_record_stats(int cpu) {
+    int ret = syscall(802);
+    assert(ret == 0);
+}

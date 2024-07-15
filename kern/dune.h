@@ -89,7 +89,7 @@ struct dune_trap_config {
 
 #define GPA_STACK_SIZE ((unsigned long)1 << 30) /* 1 gigabyte */
 #define GPA_MAP_SIZE                                                           \
-	(((unsigned long)1 << 36) - GPA_STACK_SIZE) /* 63 gigabytes */
+	(((unsigned long)1 << 35) - GPA_STACK_SIZE) /* 63 gigabytes */
 #define LG_ALIGN(addr) ((addr + (1 << 30) - 1) & ~((1 << 30) - 1))
 
 /* FIXME: magic page that maps to APIC of the host */
@@ -106,6 +106,7 @@ struct dune_trap_config {
 #define DUNE_PV_TLB_OFFSET_INTO_PI_PAGE 0
 typedef struct dune_pv_info {
 	__u64 flag;
+	__u32 full_flush_count;
 }dune_pv_info;
 
 static int dune_pv_info_cmpswap(struct dune_pv_info * info, __u64 old_flag, __u64 new_flag) {

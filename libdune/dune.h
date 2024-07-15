@@ -131,16 +131,22 @@ extern void dune_apic_eoi(void);
 SLIST_HEAD(page_head, page);
 typedef SLIST_ENTRY(page) page_entry_t;
 
+// page metadata
 struct page {
 	union {
 		page_entry_t link;
 		uint64_t lock_word;
 	};
-	uint64_t ref;
+	union {
+		uint64_t ref;
+		uint64_t epoch_end;
+	};
 };
 
-#define PAGEBASE  UINT64(0x1000000000UL)
-#define MAX_PAGES UINT64((1ul << 24)) /* 64 GB of memory */
+//#define PAGEBASE  UINT64(0x1000000000UL)
+#define PAGEBASE  UINT64(0x100000000UL)
+
+#define MAX_PAGES UINT64((1ul << 21)) /* 4 GB of memory */
 #define PAGEBASE_END UINT64(PAGEBASE + (MAX_PAGES * PGSIZE))
 #define HEAPEND UINT64(PAGEBASE)
 
@@ -286,13 +292,16 @@ extern int dune_vm_insert_page(ptent_t *root, void *va, struct page *pg,
 extern struct page *dune_vm_lookup_page(ptent_t *root, void *va);
 
 extern ptent_t *dune_vm_clone(ptent_t *root);
+extern ptent_t *dune_vm_clone_fast(ptent_t *root);
 extern void dune_vm_free(ptent_t *root);
 extern void dune_vm_default_pgflt_handler(uintptr_t addr, uint64_t fec);
 
 typedef int (*page_walk_cb)(const void *arg, ptent_t *ptep, void *va, int level);
+typedef int (*page_walk_last_level_page_cb)(const void *arg, ptent_t *dir, void *start_va, int level);
 extern int dune_vm_page_walk(ptent_t *root, void *start_va, void *end_va,
 							 page_walk_cb cb, const void *arg);
-
+extern int dune_vm_page_walk_batch(ptent_t *dir, void *start_va, void *end_va,
+						page_walk_cb cb, page_walk_last_level_page_cb cb2, const void *arg, int level);
 extern int dune_vm_page_walk_fill(ptent_t *root, void *start_va, void *end_va,
 							 page_walk_cb cb, const void *arg, int create);
 extern ptent_t *dune_vm_clone_custom(ptent_t *root, page_walk_cb cb);

@@ -54,10 +54,7 @@ int __dune_vm_page_walk(ptent_t *dir, void *start_va, void *end_va,
 	int end_idx = PDX(level, end_va);
 	void *base_va =
 		(void *)((unsigned long)start_va & ~(PDADDR(level + 1, 1) - 1));
-	if (level == 3) {
-		//printf("root %p base_va %p start_va %p end_va %p start_idx %d end_idx %d\n", dir, base_va, start_va, end_va, start_idx, end_idx);
-	}
-	
+
 	assert(level >= 0 && level <= NPTLVLS);
 	assert(end_idx < NPTENTRIES);
 
@@ -66,13 +63,7 @@ int __dune_vm_page_walk(ptent_t *dir, void *start_va, void *end_va,
 		void *cur_va = base_va + PDADDR(level, i);
 		ptent_t *pte = &dir[i];
 		
-		// if (i == 256 && level == 3) {
-		// 	printf("cur_va=%lx, i=%d, lvl=%d\n", cur_va, i, level);
-		// }
-		//printf("dir=%lx, &pte=%lx, i=%d, lvl=%d\n", (uintptr_t)dir, (uintptr_t)pte, i, level);
-		// if ((uint64_t)cur_va >= IPI_ADDR_RING_BASE && (uint64_t)cur_va < IPI_ADDR_SHARED_STATE_END) {
-		// 	printf("cur_va=%lx, dir=%lx, &pte=%lx, i=%d, lvl=%d\n", cur_va, (uintptr_t)dir, (uintptr_t)pte, i, level);
-		// }
+
 		if (level == 0) {
 			if (create == CREATE_NORMAL || *pte) {
 				ret = cb(arg, pte, cur_va, level);
@@ -125,10 +116,89 @@ int __dune_vm_page_walk(ptent_t *dir, void *start_va, void *end_va,
 	return 0;
 }
 
+
+int __dune_vm_page_walk_batch(ptent_t *dir, void *start_va, void *end_va,
+						page_walk_cb cb, page_walk_last_level_page_cb cb2, const void *arg, int level, int create)
+{
+	// XXX: Using PA == VA
+	int i, ret;
+	int start_idx = PDX(level, start_va);
+	int end_idx = PDX(level, end_va);
+	void *base_va =
+		(void *)((unsigned long)start_va & ~(PDADDR(level + 1, 1) - 1));
+
+	assert(level >= 0 && level <= NPTLVLS);
+	assert(end_idx < NPTENTRIES);
+	if (level == 0 && start_idx == 0 && end_idx - start_idx + 1 == 512) {
+		//printf("base_va %p\n", base_va);
+		return cb2(arg, dir, base_va + PDADDR(level, 0), 0);
+	}
+	for (i = start_idx; i <= end_idx; i++) {
+		void *n_start_va, *n_end_va;
+		void *cur_va = base_va + PDADDR(level, i);
+		ptent_t *pte = &dir[i];
+
+		if (level == 0) {
+			if (create == CREATE_NORMAL || *pte) {
+				ret = cb(arg, pte, cur_va, level);
+				if (ret)
+					return ret;
+			}
+			continue;
+		}
+
+		if (level == 1) {
+			if (create == CREATE_BIG || pte_big(*pte)) {
+				ret = cb(arg, pte, cur_va, level);
+				if (ret)
+					return ret;
+				continue;
+			}
+		}
+
+		if (level == 2) {
+			if (create == CREATE_BIG_1GB || pte_big(*pte)) {
+				ret = cb(arg, pte, cur_va, level);
+				if (ret)
+					return ret;
+				continue;
+			}
+		}
+
+		if (!pte_present(*pte)) {
+			ptent_t *new_pte;
+
+			if (!create)
+				continue;
+
+			new_pte = alloc_page();
+			if (!new_pte)
+				return -ENOMEM;
+			memset(new_pte, 0, PGSIZE);
+			*pte = PTE_ADDR(new_pte) | PTE_DEF_FLAGS;
+		}
+
+		n_start_va = (i == start_idx) ? start_va : cur_va;
+		n_end_va = (i == end_idx) ? end_va : cur_va + PDADDR(level, 1) - 1;
+
+		ret = __dune_vm_page_walk_batch((ptent_t *)PTE_ADDR(dir[i]), n_start_va,
+								  n_end_va, cb, cb2, arg, level - 1, create);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
 int dune_vm_page_walk(ptent_t *root, void *start_va, void *end_va,
 					  page_walk_cb cb, const void *arg)
 {
 	return __dune_vm_page_walk(root, start_va, end_va, cb, arg, 3, CREATE_NONE);
+}
+
+extern int dune_vm_page_walk_batch(ptent_t *dir, void *start_va, void *end_va,
+						page_walk_cb cb, page_walk_last_level_page_cb cb2, const void *arg, int level) {
+	return __dune_vm_page_walk_batch(dir, start_va, end_va, cb, cb2, arg, 3, CREATE_NONE);
 }
 
 int dune_vm_page_walk_fill(ptent_t *root, void *start_va, void *end_va,
@@ -461,15 +531,9 @@ static int __dune_vm_clone_helper(const void *arg, ptent_t *pte, void *va, int l
 	if (ret != 0) {
 		return ret;
 	}
-	// bool created = false;
-	// ret = dune_vm_lookup(newRoot, va, create, created, &newPte);
-	// if (ret < 0)
-	// 	return ret;
-	// assert(created);
 
 	if (dune_page_isfrompool(PTE_ADDR(*pte)))
 		dune_page_get(pg);
-	//*newPte = *pte;
 
 	return ret;
 }
@@ -492,6 +556,57 @@ ptent_t *dune_vm_clone(ptent_t *root)
 		return NULL;
 	}
 
+	return newRoot;
+}
+
+struct fast_clone_args{
+	ptent_t *newRoot;
+	int pages_copied;
+};
+
+static int __dune_vm_clone_last_level_page_helper(const void *arg, ptent_t *dir, void *start_va, int level)
+{
+	assert(level == 0);
+	int ret;
+	ptent_t *newRoot = ((struct fast_clone_args *)arg)->newRoot;
+	ptent_t *newDir = NULL;
+	bool created = false;
+	ret = dune_vm_lookup_internal(newRoot, start_va, CREATE_NORMAL, &created, &newDir);
+
+	// memcpy(newDir, dir, PGSIZE);
+	for (int i = 0; i < 512; ++i) {
+		newDir[i] = dir[i];
+		newDir[i] |= (PTE_COW);
+		newDir[i] &= ~PTE_W;
+	}
+	assert(ret == 0);
+	((struct fast_clone_args *)arg)->pages_copied++;
+
+	return ret;
+}
+
+/**
+ * Clone a page root.
+ */
+ptent_t *dune_vm_clone_fast(ptent_t *root)
+{
+	int ret;
+	struct fast_clone_args args;
+
+	ptent_t *newRoot;
+
+	newRoot = alloc_page();
+	memset(newRoot, 0, PGSIZE);
+	args.newRoot = newRoot;
+	args.pages_copied = 0;
+
+	ret = __dune_vm_page_walk_batch(root, VA_START, VA_END, &__dune_vm_clone_helper, &__dune_vm_clone_last_level_page_helper,
+							  &args, 3, CREATE_NONE);
+	if (ret < 0) {
+		dune_vm_free(newRoot);
+		return NULL;
+	}
+	printf("%d pages copied\n", args.pages_copied);
 	return newRoot;
 }
 

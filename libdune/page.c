@@ -15,7 +15,7 @@
 
 #define GROW_SIZE (512)
 
-#define NUM_GLOBAL_LISTS 128
+#define NUM_GLOBAL_LISTS 104
 typedef struct freelist {
 	pthread_mutex_t page_mutex;
 	//int num_pages;
@@ -217,6 +217,7 @@ static bool dune_try_steal_pages(int steal_from, int to, int num_pages) {
 struct page *dune_page_alloc(void)
 {
 	int steal_attempts = 0;
+	static int alloc_cnt = 0;
 	retry:
 	if (steal_attempts > 100000) {
 		printf(
@@ -230,7 +231,9 @@ struct page *dune_page_alloc(void)
 	if (cpu_id == -1) {
 		cpu_id = 0;
 	}
-
+	// if (++alloc_cnt > 1000000) {
+	// 	printf("dune_page_alloc %d\n", alloc_cnt);
+	// }
 	pthread_mutex_lock(&p_allocator->local_lists[cpu_id].page_mutex);
 	if (SLIST_EMPTY(&p_allocator->local_lists[cpu_id].pages_free)) {
 		if (grow_size(cpu_id)) {
@@ -328,6 +331,7 @@ int dune_page_init(void)
 	// }
 
 	for (i = 0; i < NUM_GLOBAL_LISTS; ++i) {
+		// printf("dune allocator list %d mutex addr %p\n", i, &p_allocator->local_lists[i].page_mutex);
 		ret = dune_page_local_freelist_init(&p_allocator->local_lists[i]);
 		if (ret != 0) {
 			return ret;
@@ -343,7 +347,8 @@ int dune_page_init(void)
 	}
 	//dune_procmap_dump();
 	printf("dune_page_init succeeded, free pages per list %lu\n", MAX_PAGES /NUM_GLOBAL_LISTS );
-
+	// dune_prefault_pages();
+	// printf("dune_page_init finished pre-faulting %lu pages\n", MAX_PAGES );
 	return 0;
 
 err:
