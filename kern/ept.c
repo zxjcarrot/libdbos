@@ -464,7 +464,11 @@ static int hva_to_pfn_remapped(struct vm_area_struct *vma, unsigned long hva,
 	spinlock_t *ptl;
 	int r;
 
+	#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
 	r = follow_pte(vma->vm_mm, hva, &ptep, &ptl);
+	#else
+	r = follow_pte(vma, hva, &ptep, &ptl);
+	#endif
 	if (r) {
 		bool unlocked = false;
 		r = fixup_user_fault(current->mm, hva,
@@ -475,8 +479,13 @@ static int hva_to_pfn_remapped(struct vm_area_struct *vma, unsigned long hva,
 		if (r) {
 			return r;
 		}
-
+		#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
 		r = follow_pte(vma->vm_mm, hva, &ptep, &ptl);
+		#else
+		r = follow_pte(vma, hva, &ptep, &ptl);
+		#endif
+
+		
 		if (r) {
 			return r;
 		}
@@ -931,6 +940,7 @@ ept_mmu_notifier_invalidate_range_end(struct mmu_notifier *mn,
 {
 }
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
 static void ept_mmu_notifier_change_pte(struct mmu_notifier *mn,
 										struct mm_struct *mm,
 										unsigned long address, pte_t pte)
@@ -947,6 +957,7 @@ static void ept_mmu_notifier_change_pte(struct mmu_notifier *mn,
 	 */
 	ept_invalidate_page(vcpu, mm, address);
 }
+#endif
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 17, 0)
 static int ept_mmu_notifier_clear_flush_young(struct mmu_notifier *mn,
@@ -1012,7 +1023,9 @@ static const struct mmu_notifier_ops ept_mmu_notifier_ops = {
 	.invalidate_range_end = ept_mmu_notifier_invalidate_range_end,
 	.clear_flush_young = ept_mmu_notifier_clear_flush_young,
 	.test_young = ept_mmu_notifier_test_young,
+#if LINUX_VERSION_CODE < KERNEL_VERSION(6, 11, 0)
 	.change_pte = ept_mmu_notifier_change_pte,
+#endif
 	.release = ept_mmu_notifier_release,
 };
 
