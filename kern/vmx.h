@@ -54,14 +54,28 @@ enum vmx_reg {
 	NR_VCPU_REGS
 };
 
+#define VMX_COMMON_LOCK_STRIPES 64
 struct vmx_common {
 	//struct mmu_notifier mmu_notifier;
-	spinlock_t ept_lock;
+	rwlock_t ept_lock;
+	spinlock_t ept_pte_locks[VMX_COMMON_LOCK_STRIPES];
 	unsigned long ept_root;
 	unsigned long eptp;
 	bool ept_ad_enabled;
 	int ref_cnt;
+
+	cpumask_t invalidate_mask;
 };
+
+inline static void ept_pte_lock(struct vmx_common *vmx_common, unsigned long gpa)
+{
+	spin_lock(&vmx_common->ept_pte_locks[(gpa >> PAGE_SHIFT) % VMX_COMMON_LOCK_STRIPES]);
+}
+
+inline static void ept_pte_unlock(struct vmx_common *vmx_common, unsigned long gpa)
+{
+	spin_unlock(&vmx_common->ept_pte_locks[(gpa >> PAGE_SHIFT) % VMX_COMMON_LOCK_STRIPES]);
+}
 
 enum vmx_mode {
 	IN_GUEST_MODE,
@@ -127,6 +141,8 @@ extern int vmx_do_ept_fault(struct vmx_vcpu *vcpu, unsigned long gpa,
 
 extern void vmx_ept_sync_vcpu(struct vmx_vcpu *vcpu);
 extern void vmx_ept_sync_individual_addr(struct vmx_vcpu *vcpu, gpa_t gpa);
+extern void vmx_ept_batch_sync(unsigned long eptp, struct cpumask * cpumask);
+extern void vmx_ept_batch_sync_individual_addr(unsigned long eptp, struct cpumask * cpumask, gpa_t gpa);
 extern void vmx_get_cpu(struct vmx_vcpu *vcpu);
 extern void vmx_put_cpu(struct vmx_vcpu *vcpu);
 static __always_inline unsigned long vmcs_readl(unsigned long field)

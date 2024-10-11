@@ -59,6 +59,8 @@ static void *do_mapping(void *base, unsigned long len)
 			printf("mmap for huge page failed 2: %s\n", strerror(errno));
 			return NULL;
 		}
+	} else {
+		//printf("mmap for huge page succeeded: base %p, len %lu\n", base, len);
 	}
 
 	return mem;

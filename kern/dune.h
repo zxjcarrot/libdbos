@@ -89,7 +89,7 @@ struct dune_trap_config {
 
 #define GPA_STACK_SIZE ((unsigned long)1 << 30) /* 1 gigabyte */
 #define GPA_MAP_SIZE                                                           \
-	(((unsigned long)1 << 35) - GPA_STACK_SIZE) /* 63 gigabytes */
+	(((unsigned long)1 << 36) - GPA_STACK_SIZE) /* 63 gigabytes */
 #define LG_ALIGN(addr) ((addr + (1 << 30) - 1) & ~((1 << 30) - 1))
 
 /* FIXME: magic page that maps to APIC of the host */

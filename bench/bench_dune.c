@@ -1,9 +1,23 @@
 #include <stdio.h>
 #include <sys/mman.h>
-
+#include <stdio.h>
+#include <stdlib.h>
+#define _GNU_SOURCE
+#define __USE_GNU 1
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <x86intrin.h>
+#include <string.h>
+#include <errno.h>
+#include <limits.h>
+#include <sys/mman.h>
+#include <sys/syscall.h>
+#include <unistd.h>
 #include "libdune/dune.h"
 #include "bench.h"
 
+#define SYSCALL_N 500000
 #define MAP_ADDR 0x400000000000
 
 static char *mem;
@@ -121,8 +135,8 @@ static void syscall_handler(struct dune_tf *tf)
 	// 	return;
 	// }
 
-	// dune_passthrough_syscall(tf);
-	dune_ret_from_user(0);
+	dune_passthrough_syscall(tf);
+//	dune_ret_from_user(0);
 }
 
 static void benchmark_syscall(void)
@@ -143,12 +157,12 @@ static void benchmark_syscall(void)
 	// 				 "mov %%eax, %0 \n\t"
 	// 				 : "=r"(ret)::"rax");
 	// }
-	for (i = 0; i < N; i++) {
-		syscall(666);
+	for (i = 0; i < SYSCALL_N; i++) {
+		syscall(SYS_gettid);
 	}
 
-	dune_printf("System call took %ld cycles\n",
-				(rdtscllp() - ticks - overhead) / N);
+	dune_printf("System call took %ld cycles, overhead %ld\n",
+				(rdtscllp() - ticks - overhead) / (SYSCALL_N), overhead);
 }
 
 static void benchmark_fault(void)
@@ -275,6 +289,124 @@ static void benchmark_appel2(void)
 	dune_printf("PROTN,TRAP,UNPROT took %ld cycles\n", avg / N);
 }
 
+
+#define NUM_OPERATIONS 50000
+#define BLOCK_SIZE 4096
+
+void perform_read_benchmark(int fd, off_t file_size, void *buffer) {
+    unsigned long long total_cycles = 0;
+    unsigned long long min_cycles = ULLONG_MAX;
+    unsigned long long max_cycles = 0;
+
+    for (int i = 0; i < NUM_OPERATIONS; i++) {
+        off_t offset = (rand() % (file_size / BLOCK_SIZE)) * BLOCK_SIZE;
+
+        unsigned long long start = rdtscllp();
+        ssize_t bytes_read = pread(fd, buffer, BLOCK_SIZE, offset);
+        unsigned long long end = rdtscllp();
+
+        if (bytes_read != BLOCK_SIZE) {
+            fprintf(stderr, "Error reading file: %s\n", strerror(errno));
+            continue;
+        }
+
+        unsigned long long cycles = end - start;
+        total_cycles += cycles;
+
+        if (cycles < min_cycles) min_cycles = cycles;
+        if (cycles > max_cycles) max_cycles = cycles;
+    }
+
+    double avg_cycles = (double)total_cycles / NUM_OPERATIONS;
+
+    printf("Read Latency Benchmark Results:\n");
+    printf("Average latency: %.2f CPU cycles\n", avg_cycles);
+    printf("Minimum latency: %llu CPU cycles\n", min_cycles);
+    printf("Maximum latency: %llu CPU cycles\n", max_cycles);
+    printf("\n");
+}
+
+void perform_write_benchmark(int fd, off_t file_size, void *buffer) {
+    unsigned long long total_cycles = 0;
+    unsigned long long min_cycles = ULLONG_MAX;
+    unsigned long long max_cycles = 0;
+
+    for (int i = 0; i < NUM_OPERATIONS; i++) {
+        off_t offset = (rand() % (file_size / BLOCK_SIZE)) * BLOCK_SIZE;
+
+        unsigned long long start = rdtscllp();
+        ssize_t bytes_written = pwrite(fd, buffer, BLOCK_SIZE, offset);
+        unsigned long long end = rdtscllp();
+
+        if (bytes_written != BLOCK_SIZE) {
+            fprintf(stderr, "Error writing file: %s\n", strerror(errno));
+            continue;
+        }
+
+        unsigned long long cycles = end - start;
+        total_cycles += cycles;
+
+        if (cycles < min_cycles) min_cycles = cycles;
+        if (cycles > max_cycles) max_cycles = cycles;
+    }
+
+    double avg_cycles = (double)total_cycles / NUM_OPERATIONS;
+
+    printf("Write Latency Benchmark Results:\n");
+    printf("Average latency: %.2f CPU cycles\n", avg_cycles);
+    printf("Minimum latency: %llu CPU cycles\n", min_cycles);
+    printf("Maximum latency: %llu CPU cycles\n", max_cycles);
+    printf("\n");
+}
+
+void benchmark_io(bool direct_io) {
+	const char *filename = "/Higgs1/test_file";
+	int flags = direct_io ? O_RDWR | O_DIRECT: O_RDWR;
+    int fd = open(filename, flags);
+    if (fd == -1) {
+        perror("Error opening file");
+        exit(1);
+    }
+
+    struct stat st;
+    if (fstat(fd, &st) == -1) {
+        perror("Error getting file size");
+        close(fd);
+        exit(1);
+    }
+
+    off_t file_size = st.st_size;
+    if (file_size < BLOCK_SIZE) {
+        fprintf(stderr, "File is too small. Minimum size: %d bytes\n", BLOCK_SIZE);
+        close(fd);
+        exit(1);
+    }
+
+	void *buffer;
+    if (posix_memalign(&buffer, BLOCK_SIZE, BLOCK_SIZE) != 0) {
+        perror("Error allocating aligned memory");
+        close(fd);
+        exit(1);
+    }
+
+    // Initialize buffer with random data for write operations
+    for (int i = 0; i < BLOCK_SIZE; i++) {
+        ((char *)buffer)[i] = rand() % 256;
+    }
+
+	srand(0);
+
+
+	// Perform read benchmark
+    perform_read_benchmark(fd, file_size, buffer);
+
+    // Perform write benchmark
+    perform_write_benchmark(fd, file_size, buffer);
+
+    free(buffer);
+    close(fd);
+}
+
 int main(int argc, char *argv[])
 {
 	int ret;
@@ -290,6 +422,9 @@ int main(int argc, char *argv[])
 
 	dune_printf("Benchmarking dune performance...\n");
 
+	benchmark_io(false);
+	benchmark_io(false);
+	benchmark_io(true);
 	benchmark_syscall();
 	benchmark_fault();
 

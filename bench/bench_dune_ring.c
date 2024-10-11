@@ -7,7 +7,7 @@
 
 #include "libdune/dune.h"
 
-#define N		 10000
+#define N		 50000
 #define MAP_ADDR 0x400000000000
 
 static unsigned long tsc;

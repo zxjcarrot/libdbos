@@ -103,6 +103,7 @@ static DEFINE_PER_CPU(int, vmx_enabled);
 DEFINE_PER_CPU(struct vmx_vcpu *, local_vcpu);
 
 static LIST_HEAD(vcpus);
+static DEFINE_SPINLOCK(vcpus_lock);
 
 static struct vmcs_config {
 	int size;
@@ -670,6 +671,20 @@ static void __vmx_get_cpu_helper(void *ptr)
 		this_cpu_write(local_vcpu, NULL);
 }
 
+static void vcpu_update_invalidate_mask(struct vmx_common * vmx_instance) {
+	struct vmx_vcpu *vcpu, *tmp;
+	int i;
+	cpumask_t mask;
+	cpumask_clear(&mask);
+	//spin_lock(&vcpus_lock);
+	list_for_each_entry_safe (vcpu, tmp, &vcpus, list) {
+		if (vcpu->cpu != -1) {
+			cpumask_set_cpu(vcpu->cpu, &mask);
+		}
+	}
+	//spin_unlock(&vcpus_lock);
+	memcpy(&vmx_instance->invalidate_mask, &mask, sizeof(mask));
+}
 /**
  * vmx_get_cpu - called before using a cpu
  * @vcpu: VCPU that will be loaded.
@@ -699,6 +714,7 @@ void vmx_get_cpu(struct vmx_vcpu *vcpu)
 			vmcs_load(vcpu->vmcs);
 			__vmx_setup_cpu();
 			vcpu->cpu = cur_cpu;
+			vcpu_update_invalidate_mask(vcpu->vmx_instance);
 		} else {
 			vmcs_load(vcpu->vmcs);
 		}
@@ -715,6 +731,23 @@ void vmx_put_cpu(struct vmx_vcpu *vcpu)
 	put_cpu();
 }
 
+struct sync_addr_args {
+	struct vmx_vcpu *vcpu;
+	gpa_t gpa;
+};
+
+struct batch_sync_addr_args {
+	unsigned long eptp;
+	gpa_t gpa;
+};
+
+static void __vmx_batch_sync_helper(void *ptr)
+{
+	struct batch_sync_addr_args *args = ptr;
+
+	ept_sync_context(args->eptp);
+}
+
 static void __vmx_sync_helper(void *ptr)
 {
 	struct vmx_vcpu *vcpu = ptr;
@@ -722,16 +755,19 @@ static void __vmx_sync_helper(void *ptr)
 	ept_sync_context(vcpu->vmx_instance->eptp);
 }
 
-struct sync_addr_args {
-	struct vmx_vcpu *vcpu;
-	gpa_t gpa;
-};
 
 static void __vmx_sync_individual_addr_helper(void *ptr)
 {
 	struct sync_addr_args *args = ptr;
 
 	ept_sync_individual_addr(args->vcpu->vmx_instance->eptp, (args->gpa & ~(PAGE_SIZE - 1)));
+}
+
+static void __vmx_batch_sync_individual_addr_helper(void *ptr)
+{
+	struct batch_sync_addr_args *args = ptr;
+
+	ept_sync_individual_addr(args->eptp, (args->gpa & ~(PAGE_SIZE - 1)));
 }
 
 /**
@@ -741,6 +777,17 @@ static void __vmx_sync_individual_addr_helper(void *ptr)
 void vmx_ept_sync_vcpu(struct vmx_vcpu *vcpu)
 {
 	smp_call_function_single(vcpu->cpu, __vmx_sync_helper, (void *)vcpu, 1);
+}
+
+void vmx_ept_batch_sync(unsigned long eptp, struct cpumask * cpumask)
+{
+	struct batch_sync_addr_args args;
+	args.eptp = eptp;
+	preempt_disable();
+	smp_call_function_many(cpumask, __vmx_batch_sync_helper,
+							 (void *)&args, 1);
+	preempt_enable();
+	__vmx_batch_sync_helper((void *)&args);
 }
 
 /**
@@ -756,6 +803,24 @@ void vmx_ept_sync_individual_addr(struct vmx_vcpu *vcpu, gpa_t gpa)
 
 	smp_call_function_single(vcpu->cpu, __vmx_sync_individual_addr_helper,
 							 (void *)&args, 1);
+}
+
+/**
+ * vmx_ept_sync_individual_addr - used to evict an individual address
+ * @vcpu: the vcpu
+ * @gpa: the guest-physical address
+ */
+void vmx_ept_batch_sync_individual_addr(unsigned long eptp, struct cpumask * cpumask, gpa_t gpa)
+{
+	struct batch_sync_addr_args args;
+	args.eptp = eptp;
+	args.gpa = gpa;
+
+	preempt_disable();
+	smp_call_function_many(cpumask, __vmx_batch_sync_individual_addr_helper,
+							 (void *)&args, 1);
+	preempt_enable();
+	__vmx_batch_sync_individual_addr_helper((void *)&args);
 }
 
 #define STACK_DEPTH 20
@@ -1235,6 +1300,7 @@ static struct vmx_vcpu *vmx_create_vcpu(struct dune_config *conf)
 	struct vmx_vcpu *vcpu;
 	struct desc_ptr dt;
 	bool first_vcpu = false;
+	int i;
 	if (conf->vcpu) {
 		/* This Dune configuration already has a VCPU. */
 		vcpu = (struct vmx_vcpu *)conf->vcpu;
@@ -1259,8 +1325,9 @@ static struct vmx_vcpu *vmx_create_vcpu(struct dune_config *conf)
 	}
 	memset(vcpu, 0, sizeof(*vcpu));
 	
+	spin_lock(&vcpus_lock);
 	list_add(&vcpu->list, &vcpus);
-
+	spin_unlock(&vcpus_lock);
 	vcpu->vmx_instance = vmx_instance;
 	vmx_instance->ref_cnt++;
 	printk(KERN_INFO "vmx_instance->ref_cnt %d\n", vmx_instance->ref_cnt);
@@ -1283,7 +1350,11 @@ static struct vmx_vcpu *vmx_create_vcpu(struct dune_config *conf)
 	printk(KERN_INFO "Set up interrupt descriptor table %p\n", vcpu->idt_base);
 
 	if (first_vcpu) {
-		spin_lock_init(&vmx_instance->ept_lock);
+		//spin_lock_init(&vmx_instance->ept_lock);
+		vmx_instance->ept_lock = __RW_LOCK_UNLOCKED("ept_lock");
+		for (i = 0; i < VMX_COMMON_LOCK_STRIPES; i++) {
+			spin_lock_init(&vmx_instance->ept_pte_locks[i]);
+		}
 	}
 	if (first_vcpu && vmx_init_ept(vmx_instance))
 		goto fail_ept;
@@ -1304,7 +1375,7 @@ static struct vmx_vcpu *vmx_create_vcpu(struct dune_config *conf)
 		vmx_instance->ept_ad_enabled = true;
 		printk(KERN_INFO "vmx: enabled EPT A/D bits");
 	}
-	if (vmx_create_ept(vcpu))
+	if (first_vcpu && vmx_create_ept(vcpu))
 		goto fail_ept;
 
 	return vcpu;
@@ -1344,6 +1415,7 @@ void vmx_cleanup(void)
 {
 	struct vmx_vcpu *vcpu, *tmp;
 	int i;
+	spin_lock(&vcpus_lock);
 	list_for_each_entry_safe (vcpu, tmp, &vcpus, list) {
 		printk(KERN_ERR "vmx: destroying VCPU (VPID %d), queued_interrupts %llu, posted_vector_interrupts %llu, ept_table_pages %llu, host_4k_pages %llu, host_huge_pages %llu, reschedule_count %d, pcpu_change %d\n", vcpu->vpid, vcpu->queued_interrupts, vcpu->posted_vector_interrupts, vcpu->pgtbl_pages_created, vcpu->host_4k_pages_connected, vcpu->host_huge_pages_connected, vcpu->reschedule_count, vcpu->physical_processor_change);
 		for (i = 0; i < EXIT_REASON_NOTIFY + 1; ++i) {
@@ -1354,6 +1426,7 @@ void vmx_cleanup(void)
 		list_del(&vcpu->list);
 		vmx_destroy_vcpu(vcpu);
 	}
+	spin_unlock(&vcpus_lock);
 	if (vmx_instance != NULL) {
 		BUG_ON(vmx_instance->ref_cnt != 0);
 		printk(KERN_ERR "vmx: destroyed all vCPUs, vmx_instance->ref_cnt %d\n", vmx_instance->ref_cnt);
@@ -2030,13 +2103,16 @@ int vmx_launch(struct dune_config *conf, int64_t *ret_code)
 			atomic_inc((atomic_t*)&vcpu->pv_info->full_flush_count);
 			vpid_sync_context(vcpu->vpid);
 		}
+		unsigned long gcr3 = vcpu->gcr3;
 		if (pv_flag & DUNE_PV_CHANGE_GUEST_CR3) {
 			old_cr3 = vmcs_readl(GUEST_CR3);
+			gcr3 = old_cr3;
 			new_cr3  = (pv_flag & DUNE_PV_CHANGE_GUEST_CR3_MASK);
 			printk(KERN_INFO
 				   "DUNE_PV_CHANGE_GUEST_CR3 old_cr3 %px new_cr3 %px for vcpu %d\n",
 				   old_cr3, new_cr3, vcpu->vpid);
 			vmcs_writel(GUEST_CR3, new_cr3);
+			gcr3 = new_cr3;
 		}
 
 		vmx_handle_queued_interrupts(vcpu);
@@ -2071,14 +2147,14 @@ int vmx_launch(struct dune_config *conf, int64_t *ret_code)
 			vmx_step_instruction();
 		}
 
+// vmx_get_cpu(vcpu);
+			//unsigned long gcr3 = vmcs_readl(GUEST_CR3);
+			//vmx_put_cpu(vcpu);
 		vmx_put_cpu(vcpu);
 		vcpu->exit_count[ret]++;
 		if (ret == EXIT_REASON_VMCALL){
 			vmx_handle_syscall(vcpu);
-			
-			vmx_get_cpu(vcpu);
-			unsigned long gcr3 = vmcs_readl(GUEST_CR3);
-			vmx_put_cpu(vcpu);
+
 			if (gcr3 != vcpu->gcr3) {
 				printk(KERN_INFO
 				   "new gcr3 %px from vcpu %d, old %px\n",

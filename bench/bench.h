@@ -2,7 +2,7 @@
  * bench.h - shared definitions for all benchmarks
  */
 
-#define NRPGS 100000
+#define NRPGS 10000
 #define N	  10
 
 static inline void synch_tsc(void)

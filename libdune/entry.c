@@ -442,13 +442,13 @@ static int __setup_mappings_full(struct dune_layout *layout)
 						 PERM_R | PERM_W | PERM_X | PERM_U);
 	if (ret)
 		return ret;
-	printf("dune: map_v_addr %lx map_p_addr %lx, map_size %lu MiB\n", (uintptr_t)layout->base_map,  dune_mmap_addr_to_pa((void *)layout->base_map), GPA_MAP_SIZE / 1024 / 1024);
+	printf("dune: map_v_addr %lx map_p_addr %lx, map_size %lu MiB, [%lx, %lx]\n", (uintptr_t)layout->base_map,  dune_mmap_addr_to_pa((void *)layout->base_map), GPA_MAP_SIZE / 1024 / 1024, (uintptr_t)layout->base_map, (uintptr_t)layout->base_map + GPA_MAP_SIZE);
 
 	ret = dune_vm_map_phys(
 		pgroot, (void *)layout->base_stack, GPA_STACK_SIZE,
 		(void *)dune_stack_addr_to_pa((void *)layout->base_stack),
 		PERM_R | PERM_W | PERM_X | PERM_U | PERM_NOCOW);
-	printf("dune: stack_v_addr %lx stack_p_addr %lx, stack_size %lu MiB\n", (uintptr_t)layout->base_stack, dune_stack_addr_to_pa((void *)layout->base_stack), GPA_STACK_SIZE/1024/1024);
+	printf("dune: stack_v_addr %lx stack_p_addr %lx, stack_size %lu MiB, [%lx, %lx]\n", (uintptr_t)layout->base_stack, dune_stack_addr_to_pa((void *)layout->base_stack), GPA_STACK_SIZE/1024/1024, (uintptr_t)layout->base_stack, (uintptr_t)layout->base_stack + GPA_STACK_SIZE);
 	if (ret)
 		return ret;
 
@@ -457,7 +457,7 @@ static int __setup_mappings_full(struct dune_layout *layout)
 						   PERM_R | PERM_W | PERM_BIG | PERM_NOCOW);
 	if (ret)
 		return ret;
-	printf("dune: pgbase_v_addr %lx pgbase_p_addr [%lx,%lx], PAGE %lu MiB\n", PAGEBASE, dune_va_to_pa((void *)PAGEBASE), dune_va_to_pa((void *)PAGEBASE) + (MAX_PAGES * PGSIZE), (MAX_PAGES * PGSIZE)/1024/1024);
+	printf("dune: pgbase_v_addr %lx pgbase_p_addr [%lx,%lx], PAGE %lu MiB, [%lx, %lx]\n", PAGEBASE, dune_va_to_pa((void *)PAGEBASE), dune_va_to_pa((void *)PAGEBASE) + (MAX_PAGES * PGSIZE), (MAX_PAGES * PGSIZE)/1024/1024, PAGEBASE, PAGEBASE + (MAX_PAGES * PGSIZE));
 
 	dune_procmap_iterate(setup_vdso_cb);
 	setup_vsyscall();
@@ -754,14 +754,55 @@ static void dune_default_syscall_handler(struct dune_tf *tf)
 }
 
 int dune_cnt = 0;
+
+
+static inline int prot_to_perm(int prot)
+{
+	int perm = PERM_U;
+
+	if (prot & PROT_READ)
+		perm |= PERM_R;
+	if (prot & PROT_WRITE)
+		perm |= PERM_W;
+	if (prot & PROT_EXEC)
+		perm |= PERM_X;
+
+	return perm;
+}
 static void dune_default_g0_syscall_handler(struct dune_tf *tf)
 {
   	int syscall_num = (int) tf->rax;
 	int cpu_id = dune_get_cpu_id();
-	if (syscall_num == 9) {
-		dune_printf("got mmap(addr=%lx, length=%lx, prot=%lx, flags=%lx, fd=%lx, offset=%lx), hugetlb?%s\n", tf->rdi, tf->rsi, tf->rdx, tf->r10, tf->r8, tf->r9, (tf->r10 & MAP_HUGETLB) ? "yes" : "no");
+	int ret;
+	if (syscall_num == SYS_mmap) {
+		// for length greater than 2MB, make it a huge page
+		struct dune_tf new_tf = *tf;
+		int flags = (int)tf->r10;
+		int prot = (int)tf->rdx;
+		size_t len = (size_t)tf->rsi;
+		if (len >= 2 * 1024 * 1024 && (prot & PROT_EXEC) == 0) {
+			new_tf.r10 |= MAP_HUGETLB;
+		}
+		dune_printf("got mmap(addr=%lx, length=%lx, prot=%lx, flags=%lx, fd=%lx, offset=%lx), hugetlb?%s\n", new_tf.rdi, new_tf.rsi, new_tf.rdx, new_tf.r10, new_tf.r8, new_tf.r9, (new_tf.r10 & MAP_HUGETLB) ? "yes" : "no");
+		dune_passthrough_g0_syscall(&new_tf);
+		dune_printf("mmap(addr=%lx, length=%lx, prot=%lx, flags=%lx, fd=%lx, offset=%lx), hugetlb?%s, return %lx\n", new_tf.rdi, new_tf.rsi, new_tf.rdx, new_tf.r10, new_tf.r8, new_tf.r9, (new_tf.r10 & MAP_HUGETLB) ? "yes" : "no",new_tf.rax);
+		tf->rax = new_tf.rax;
+		if (new_tf.rax != (unsigned long)MAP_FAILED) {
+			if (len >= 2 * 1024 * 1024 && (prot & PROT_EXEC) == 0) {
+				ret = dune_vm_map_phys(pgroot, new_tf.rax, len,
+					(void *)dune_va_to_pa((void *)new_tf.rax),
+					prot_to_perm(prot) | PERM_BIG);
+				if (ret) {
+					printf("dune: failed to map dune huge page\n");
+				} else {
+					printf("dune: mapped dune huge page\n");
+				}
+			}
+		}
+		
+	} else {
+		dune_passthrough_g0_syscall(tf);
 	}
-    dune_passthrough_g0_syscall(tf);
 }
 
 /**

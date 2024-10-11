@@ -7,7 +7,7 @@
 #include <sys/wait.h>
 #include <sys/mman.h>
 #include <memory.h>
-
+#include <sys/prctl.h>
 #include <vector>
 #include <atomic>
 #include <stdexcept>
@@ -23,7 +23,7 @@ typedef struct {
 	int num_threads;
 } ThreadArg;
 
-constexpr size_t kHistogramBinCount = 50000000;
+constexpr size_t kHistogramBinCount = 5000000;
 static inline unsigned long rdtscllp(void)
 {
 	unsigned int a, d;
@@ -47,7 +47,7 @@ public:
     void addLatency(double latency) {
         int index = static_cast<int>((latency - minLatency) / binWidth);
         if (index < 0 || index >= bins.size()) {
-            throw std::out_of_range("Latency" + std::to_string(latency) + " is out of the histogram range.");
+            //throw std::out_of_range("Latency" + std::to_string(latency) + " is out of the histogram range.");
         }
         bins[index] += 1;
     }
@@ -73,7 +73,7 @@ public:
         }
 
         int targetCount = static_cast<int>(percentile / 100.0 * totalLatencies);
-        int runningCount = 0;
+        size_t runningCount = 0;
         for (size_t i = 0; i < bins.size(); ++i) {
             runningCount += bins[i];
             if (runningCount >= targetCount) {
@@ -156,7 +156,9 @@ uint32_t perform_random_read(char *memory, size_t size, int cnt) {
     for (size_t i = 0; i < size && cnt--; i += 4096) { // Accessing in page size increments
         x = random_u32(x);
         size_t index = (x % (size / 4096)) * 4096;
-        s += memory[index]; // Simple read
+        for (int j = 0; j < 4096; ++j) {
+            s += memory[index + j]; // Simple read
+        }
     }
 
     gettimeofday(&end, NULL);
@@ -183,9 +185,12 @@ void* perform_random_access(char *memory, size_t size, int cnt, int num_threads,
 		// uint64_t x = RandomGenerator::getRandU64();
 		// size_t index = (x % (end_p - start_p) + start_p) * 4096;
         size_t index = i * 4096;
+        unsigned long ts = rdtscllp();
 		memory[index] += 1; // Simple write operation to trigger CoW
 		s += memory[index];
 		++accesses;
+        unsigned long te = rdtscllp();
+        hist->addLatency(te - ts);
 	}
     // for (size_t i = 0; cnt--; i ++) { // Accessing in page size increments
     //     uint64_t x = RandomGenerator::getRandU64();
@@ -250,6 +255,23 @@ void run_benchmark(int num_threads, ThreadArg * arg) {
     double p999Latency = hist.getPercentile(99.9);
     printf("min %.2f  avg %.2f max %.2f p50 %.2f p75 %.2f p90 %.2f p95 %.2f p99 %.2f p99.9 %.2f\n", minLatency, avgLatency, maxLatency, p50Latency, p75Latency, p90Latency, p95Latency, p99Latency, p999Latency);
 }
+
+#include <iostream>
+#include <thread>
+#include <future>
+#include <chrono>
+#include <vector>
+#include <unistd.h>
+
+std::chrono::nanoseconds run_program_and_calculate_time()
+{
+    // TODO: Do your real stuff here
+    std::string cmd = "perf record -g -p " + std::to_string(getpid()) + " sleep 1";
+    std::cout << "command to be executed \"" << cmd << "\"" << std::endl;
+    system(cmd.c_str());
+    return std::chrono::nanoseconds(5);
+}
+
 int main(int argc, char *argv[]) {
     if (argc != 5) {
         fprintf(stderr, "Usage: %s <memory_size_in_MB> <ratio_of_memory_to_access> <threads> <fork_or_not> \n", argv[0]);
@@ -284,6 +306,14 @@ int main(int argc, char *argv[]) {
         run_benchmark(num_threads, &thread_arg);
         return 0;
     }
+    #ifdef ODF
+    prctl(65, 0, 0, 0, 0);
+    printf("enabled on-demand-fork through prctl(65, 0, 0, 0, 0)\n");
+    #endif
+
+    // std::thread t(run_program_and_calculate_time);
+
+    usleep(1500000);
     gettimeofday(&start, NULL);
     pid_t pid = fork();
     gettimeofday(&end, NULL);
@@ -296,15 +326,21 @@ int main(int argc, char *argv[]) {
     } else if (pid == 0) { // Child process
         uint64_t s = 0;
         gettimeofday(&start, NULL);
+
         while (true) {
             gettimeofday(&end, NULL);
             elapsed = (end.tv_sec - start.tv_sec) + (end.tv_usec - start.tv_usec) / 1000000.0;
-            if (elapsed > 30) {
+            if (elapsed > 5) {
                 break;
             }
-            for (size_t i = 0; i < memory_size; i++) {
-                s += memory[i];
+            struct timeval bench_start, bench_end;
+            gettimeofday(&bench_start, NULL);
+            for (size_t i = 0; i < memory_size; i+=8) {
+                s += *(uint64_t*)&memory[i];
             }
+            gettimeofday(&bench_end, NULL);
+            elapsed = (bench_end.tv_sec - bench_start.tv_sec) + (bench_end.tv_usec - bench_start.tv_usec) / 1000000.0;
+            printf("Time taken for fork: %.6f seconds, s %lu, throughput %fGB/s\n", elapsed, s, memory_size / (elapsed * 1024 * 1024 * 1024UL));
         }
         munmap(memory, memory_size);
         _exit(s);

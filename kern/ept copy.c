@@ -378,10 +378,10 @@ static int ept_map_apic_page(struct vmx_vcpu *vcpu, int make_write, unsigned lon
 	int ret;
 	epte_t *epte, flags;
 
-	write_lock(&vcpu->vmx_instance->ept_lock);
+	spin_lock(&vcpu->vmx_instance->ept_lock);
 	ret = ept_lookup_gpa(vcpu, (void *) gpa, 0, 1, &epte);
 	if (ret) {
-		write_unlock(&vcpu->vmx_instance->ept_lock);
+		spin_unlock(&vcpu->vmx_instance->ept_lock);
 		printk(KERN_ERR "ept: failed to lookup EPT entry\n");
 		return ret;
 	}
@@ -401,7 +401,7 @@ static int ept_map_apic_page(struct vmx_vcpu *vcpu, int make_write, unsigned lon
 		ept_clear_epte(epte);
 
 	*epte = epte_addr(APIC_DEFAULT_PHYS_BASE) | flags;
-	write_unlock(&vcpu->vmx_instance->ept_lock);
+	spin_unlock(&vcpu->vmx_instance->ept_lock);
 
 	return 0;
 }
@@ -412,10 +412,10 @@ static int ept_map_posted_intr_desc_page(struct vmx_vcpu *vcpu, int make_write, 
 	epte_t *epte, flags;
 	long addr;
 
-	write_lock(&vcpu->vmx_instance->ept_lock);
+	spin_lock(&vcpu->vmx_instance->ept_lock);
 	ret = ept_lookup_gpa(vcpu, (void *) gpa, 0, 1, &epte);
 	if (ret) {
-		write_unlock(&vcpu->vmx_instance->ept_lock);
+		spin_unlock(&vcpu->vmx_instance->ept_lock);
 		printk(KERN_ERR "ept: failed to lookup EPT entry\n");
 		return ret;
 	}
@@ -424,7 +424,7 @@ static int ept_map_posted_intr_desc_page(struct vmx_vcpu *vcpu, int make_write, 
 	
 	addr = (long)__pa(posted_interrupt_desc_region) + (gpa - GPA_POSTED_INTR_DESCS);
 	*epte = epte_addr(addr) | flags;
-	write_unlock(&vcpu->vmx_instance->ept_lock);
+	spin_unlock(&vcpu->vmx_instance->ept_lock);
 
 	return 0;
 }
@@ -435,10 +435,10 @@ static int ept_map_tlb_info_page(struct vmx_vcpu *vcpu, int make_write, unsigned
 	epte_t *epte, flags;
 	long addr;
 
-	write_lock(&vcpu->vmx_instance->ept_lock);
+	spin_lock(&vcpu->vmx_instance->ept_lock);
 	ret = ept_lookup_gpa(vcpu, (void *) gpa, 0, 1, &epte);
 	if (ret) {
-		write_unlock(&vcpu->vmx_instance->ept_lock);
+		spin_unlock(&vcpu->vmx_instance->ept_lock);
 		printk(KERN_ERR "ept: failed to lookup EPT entry\n");
 		return ret;
 	}
@@ -447,7 +447,7 @@ static int ept_map_tlb_info_page(struct vmx_vcpu *vcpu, int make_write, unsigned
 	
 	addr = (long)__pa(tlb_info_region) + (gpa - GPA_PV_INFO_PAGES);
 	*epte = epte_addr(addr) | flags;
-	write_unlock(&vcpu->vmx_instance->ept_lock);
+	spin_unlock(&vcpu->vmx_instance->ept_lock);
 
 	return 0;
 }
@@ -552,10 +552,10 @@ static int ept_set_pfnmap_epte(struct vmx_vcpu *vcpu, int make_write,
 	up_read(&mm->mmap_sem);
 
 	/* NOTE: pfn's can not be huge pages, which is quite a relief here */
-	write_lock(&vcpu->vmx_instance->ept_lock);
+	spin_lock(&vcpu->vmx_instance->ept_lock);
 	ret = ept_lookup_gpa(vcpu, (void *)gpa, 0, 1, &epte);
 	if (ret) {
-		write_unlock(&vcpu->vmx_instance->ept_lock);
+		spin_unlock(&vcpu->vmx_instance->ept_lock);
 		printk(KERN_ERR "ept: failed to lookup EPT entry\n");
 		return ret;
 	}
@@ -575,7 +575,7 @@ static int ept_set_pfnmap_epte(struct vmx_vcpu *vcpu, int make_write,
 		ept_clear_epte(epte);
 
 	*epte = epte_addr(pfn << PAGE_SHIFT) | flags;
-	write_unlock(&vcpu->vmx_instance->ept_lock);
+	spin_unlock(&vcpu->vmx_instance->ept_lock);
 
 	return 0;
 }
@@ -617,9 +617,7 @@ static int ept_set_epte(struct vmx_vcpu *vcpu, int make_write, unsigned long gva
 		return ret;
 	}
 
-
-
-	//write_lock(&vcpu->vmx_instance->ept_lock);
+	spin_lock(&vcpu->vmx_instance->ept_lock);
 
 	huge_shift = compound_order(compound_head(page)) + PAGE_SHIFT;
 	level = 0;
@@ -628,27 +626,14 @@ static int ept_set_epte(struct vmx_vcpu *vcpu, int make_write, unsigned long gva
 	else if (huge_shift == 21)
 		level = 1;
 
-	bool read_locked = true;
-	read_lock(&vcpu->vmx_instance->ept_lock);
-	ret = ept_lookup_gpa(vcpu, (void *)gpa, level, 0, &epte);
-	if (ret == -ENOENT) {
-		read_unlock(&vcpu->vmx_instance->ept_lock);
-		read_locked = false;
-		write_lock(&vcpu->vmx_instance->ept_lock);
-		ret = ept_lookup_gpa(vcpu, (void *)gpa, level, 1, &epte);
-	}
-
+	ret = ept_lookup_gpa(vcpu, (void *)gpa, level, 1, &epte);
 	if (ret) {
-		if (read_locked)
-			read_unlock(&vcpu->vmx_instance->ept_lock);
-		else
-			write_unlock(&vcpu->vmx_instance->ept_lock);
+		spin_unlock(&vcpu->vmx_instance->ept_lock);
 		put_page(page);
 		printk(KERN_ERR "ept: failed to lookup EPT entry\n");
 		return ret;
 	}
 
-	ept_pte_lock(vcpu->vmx_instance, (void *)gpa);
 	if (epte_present(*epte)) {
 		was_present = true;
 		if (!epte_big(*epte) && level == 2)
@@ -688,11 +673,7 @@ static int ept_set_epte(struct vmx_vcpu *vcpu, int make_write, unsigned long gva
 
 	*epte = epte_addr(page_to_phys(page)) | flags;
 	
-	ept_pte_unlock(vcpu->vmx_instance, (void *)gpa);
-	if (read_locked)
-		read_unlock(&vcpu->vmx_instance->ept_lock);
-	else
-		write_unlock(&vcpu->vmx_instance->ept_lock);
+	spin_unlock(&vcpu->vmx_instance->ept_lock);
 
 	// if (++vcpu->pgflt_count < 1000) {
 	// 	printk(KERN_INFO "ept: %lluth ept fault, GVA: 0x%lx, GPA: 0x%lx, HVA: 0x%lx, HPA: 0x%llx\n", vcpu->pgflt_count, gva, gpa,
@@ -744,26 +725,18 @@ static int ept_invalidate_page(struct vmx_vcpu *vcpu, struct mm_struct *mm,
 		return 0;
 	}
 
-	read_lock(&vcpu->vmx_instance->ept_lock);
-	ept_pte_lock(vcpu->vmx_instance, gpa);
+	spin_lock(&vcpu->vmx_instance->ept_lock);
 	ret = ept_lookup_gpa(vcpu, (void *)gpa, 0, 0, &epte);
 	if (ret) {
-		ept_pte_unlock(vcpu->vmx_instance, gpa);
-		read_unlock(&vcpu->vmx_instance->ept_lock);
+		spin_unlock(&vcpu->vmx_instance->ept_lock);
 		return 0;
 	}
 
 	ret = ept_clear_epte(epte);
-	ept_pte_unlock(vcpu->vmx_instance, gpa);
-	read_unlock(&vcpu->vmx_instance->ept_lock);
+	spin_unlock(&vcpu->vmx_instance->ept_lock);
 
-	if (ret) {
-		cpumask_t mask;
-		memcpy(&mask, &vcpu->vmx_instance->invalidate_mask, sizeof(mask));
-		vmx_ept_batch_sync_individual_addr(vcpu->vmx_instance->eptp, &mask, (gpa_t)gpa);
-		//vmx_ept_sync_individual_addr(vcpu, (gpa_t)gpa);
-	}
-		//vmx_ept_sync_individual_addr(vcpu, (gpa_t)gpa);
+	if (ret)
+		vmx_ept_sync_individual_addr(vcpu, (gpa_t)gpa);
 
 	return ret;
 }
@@ -788,9 +761,9 @@ static int ept_check_page_mapped(struct vmx_vcpu *vcpu, struct mm_struct *mm,
 		return 0;
 	}
 
-	read_lock(&vcpu->vmx_instance->ept_lock);
+	spin_lock(&vcpu->vmx_instance->ept_lock);
 	ret = ept_lookup_gpa(vcpu, (void *)gpa, 0, 0, &epte);
-	read_unlock(&vcpu->vmx_instance->ept_lock);
+	spin_unlock(&vcpu->vmx_instance->ept_lock);
 
 	return !ret;
 }
@@ -816,28 +789,20 @@ static int ept_check_page_accessed(struct vmx_vcpu *vcpu, struct mm_struct *mm,
 		return 0;
 	}
 
-	read_lock(&vcpu->vmx_instance->ept_lock);
+	spin_lock(&vcpu->vmx_instance->ept_lock);
 	ret = ept_lookup_gpa(vcpu, (void *)gpa, 0, 0, &epte);
-	ept_pte_lock(vcpu->vmx_instance, gpa);
 	if (ret) {
-		ept_pte_unlock(vcpu->vmx_instance, gpa);
-		read_unlock(&vcpu->vmx_instance->ept_lock);
+		spin_unlock(&vcpu->vmx_instance->ept_lock);
 		return 0;
 	}
 
 	accessed = (*epte & __EPTE_A);
 	if (flush & accessed)
 		*epte = (*epte & ~__EPTE_A);
-	ept_pte_unlock(vcpu->vmx_instance, gpa);
-	read_unlock(&vcpu->vmx_instance->ept_lock);
+	spin_unlock(&vcpu->vmx_instance->ept_lock);
 
-	if (flush & accessed) {
-		cpumask_t mask;
-		memcpy(&mask, &vcpu->vmx_instance->invalidate_mask, sizeof(mask));
-		vmx_ept_batch_sync_individual_addr(vcpu->vmx_instance->eptp, &mask, (gpa_t)gpa);
-		// vmx_ept_sync_individual_addr(vcpu, (gpa_t)gpa);
-	}
-
+	if (flush & accessed)
+		vmx_ept_sync_individual_addr(vcpu, (gpa_t)gpa);
 
 	return accessed;
 }
@@ -883,37 +848,20 @@ static void ept_mmu_notifier_invalidate_range_start(struct mmu_notifier *mn,
 
 	pr_debug("ept: invalidate_range_start start %lx end %lx\n", start, end);
 
-	unsigned long gpa = 0;
-	read_lock(&vcpu->vmx_instance->ept_lock);
-	int count = 0;
+	spin_lock(&vcpu->vmx_instance->ept_lock);
 	while (pos < end) {
 		ret = ept_lookup(vcpu, mm, (void *)pos, 0, 0, &epte);
 		if (!ret) {
-			gpa = (void *)hva_to_gpa(vcpu, mm, pos);
-			ept_pte_lock(vcpu->vmx_instance, gpa);
 			pos += epte_big(*epte) ? HUGE_PAGE_SIZE : PAGE_SIZE;
-			sync_needed = *epte == __EPTE_NONE ? false : true;
 			ept_clear_epte(epte);
-			ept_pte_unlock(vcpu->vmx_instance, gpa);
+			sync_needed = true;
 		} else
 			pos += PAGE_SIZE;
-		count++;
 	}
-	read_unlock(&vcpu->vmx_instance->ept_lock);
+	spin_unlock(&vcpu->vmx_instance->ept_lock);
 
-	if (sync_needed) {
-		cpumask_t mask;
-		memcpy(&mask, &vcpu->vmx_instance->invalidate_mask, sizeof(mask));
-		if (count == 1) {
-			if (gpa != 0) {
-				vmx_ept_batch_sync_individual_addr(vcpu->vmx_instance->eptp, &mask, (gpa_t)gpa);
-			}
-		} else {
-			vmx_ept_batch_sync(vcpu->vmx_instance->eptp, &mask);
-			// vmx_ept_sync_vcpu(vcpu);
-		}
-		// vmx_ept_sync_vcpu(vcpu);
-	}
+	if (sync_needed)
+		vmx_ept_sync_vcpu(vcpu);
 
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(5, 0, 0)
 	return 0;

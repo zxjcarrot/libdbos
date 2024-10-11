@@ -1,8 +1,8 @@
 CC	:= gcc
 CPP	:= g++
-CFLAGS	:= -DNDEBUG -Wall -g -MD -O3 -I../
+CFLAGS	:= -DNDEBUG -Wall -g -MD -O1 -I../
 CPPFLAGS	:=  -DNDEBUG -Wall -g -MD -O3 -I../
-LDFLAGS := -ldune -lpthread
+LDFLAGS := -ldune -lpthread -luring
 
 bench_files := bench_dune  bench_dune_exception bench_dune_ring bench_linux posted_ipi posted_ipi_send posted_ipi_receive posted_ipi_ping_pong bench_fork_cow bench_tabby_cow bench_ipi
 
@@ -18,13 +18,19 @@ bench_dune_ring: bench_dune_ring.o ../libdune/libdune.a
 	$(CC) $(CFLAGS) $(<) -L../libdune $(LDFLAGS) -o $(@)
 
 bench_linux: bench_linux.o
-	$(CC) $(CFLAGS) $(<) -o $(@)
+	$(CC) $(CFLAGS) $(<) -luring -o $(@)
 
 bench_ipi: bench_ipi.o
 	$(CC) $(CFLAGS) $(<) -L../libdune $(LDFLAGS) -o $(@)
 	
 bench_fork_cow: bench_fork_cow.o
 	$(CPP) $(CFLAGS) $(<) -L../libdune $(LDFLAGS) -o $(@)
+
+bench_fork_cow_odf: bench_fork_cow.o
+	$(CPP) $(CFLAGS) $(<) -DODF -L../libdune $(LDFLAGS) -o $(@)
+
+bench_fork_cow_odf: bench_fork_cow.o
+	g++ -L../libdune -DODF -DNDEBUG -Wall -g -MD -O3 -I../ -ldune -lpthread bench_fork_cow.cpp -o bench_fork_cow_odf
 
 bench_tabby_cow: bench_tabby_cow.o 
 	$(CPP) $(CFLAGS) $(<) -L../libdune $(LDFLAGS) -o $(@)
