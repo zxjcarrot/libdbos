@@ -1,8 +1,7 @@
 
-pushd ../../vmcache/
+pushd ../../tabby/
 
 # Execute your commands here
-make vmcache;
-make tabby;
+make all
 # Return to the original directory
 popd
