@@ -26,10 +26,10 @@ if these requirements are met.
 ----
 # Setup
 
-```
-$ make
-# insmod kern/dune.ko
-# test/hello
+```shell
+make
+insmod kern/dune.ko
+test/hello
 ```
 
 You'll need to be root to compile and load the module. However, applications can use

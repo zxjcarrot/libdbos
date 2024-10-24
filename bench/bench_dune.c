@@ -422,9 +422,9 @@ int main(int argc, char *argv[])
 
 	dune_printf("Benchmarking dune performance...\n");
 
-	benchmark_io(false);
-	benchmark_io(false);
-	benchmark_io(true);
+	// benchmark_io(false);
+	// benchmark_io(false);
+	// benchmark_io(true);
 	benchmark_syscall();
 	benchmark_fault();
 

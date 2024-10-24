@@ -29,6 +29,9 @@
 #include "debug.h"
 #include "fast_spawn.h"
 
+#ifndef GUEST_HUGE_PAGE_THRESHOLD
+#define GUEST_HUGE_PAGE_THRESHOLD (16 * 1024 * 1024)
+#endif
 #define BUILD_ASSERT(cond)                                                     \
 	do {                                                                       \
 		(void)sizeof(char[1 - 2 * !(cond)]);                                   \
@@ -780,26 +783,32 @@ static void dune_default_g0_syscall_handler(struct dune_tf *tf)
 		int flags = (int)tf->r10;
 		int prot = (int)tf->rdx;
 		size_t len = (size_t)tf->rsi;
-		// if (len >= 2 * 1024 * 1024 && (prot & PROT_EXEC) == 0) {
-		// 	new_tf.r10 |= MAP_HUGETLB;
-		// }
-		dune_printf("got mmap(addr=%lx, length=%lx, prot=%lx, flags=%lx, fd=%lx, offset=%lx), hugetlb?%s\n", new_tf.rdi, new_tf.rsi, new_tf.rdx, new_tf.r10, new_tf.r8, new_tf.r9, (new_tf.r10 & MAP_HUGETLB) ? "yes" : "no");
-		dune_passthrough_g0_syscall(&new_tf);
-		dune_printf("mmap(addr=%lx, length=%lx, prot=%lx, flags=%lx, fd=%lx, offset=%lx), hugetlb?%s, return %lx\n", new_tf.rdi, new_tf.rsi, new_tf.rdx, new_tf.r10, new_tf.r8, new_tf.r9, (new_tf.r10 & MAP_HUGETLB) ? "yes" : "no",new_tf.rax);
-		tf->rax = new_tf.rax;
-		if (new_tf.rax != (unsigned long)MAP_FAILED) {
-			// if (len >= 2 * 1024 * 1024 && (prot & PROT_EXEC) == 0) {
-			// 	ret = dune_vm_map_phys(pgroot, new_tf.rax, len,
-			// 		(void *)dune_va_to_pa((void *)new_tf.rax),
-			// 		prot_to_perm(prot) | PERM_BIG);
-			// 	if (ret) {
-			// 		printf("dune: failed to map dune huge page\n");
-			// 	} else {
-			// 		printf("dune: mapped dune huge page\n");
-			// 	}
-			// }
+		bool huge_page = false;
+		if (len >= GUEST_HUGE_PAGE_THRESHOLD && (prot & PROT_EXEC) == 0) {
+			new_tf.r10 |= MAP_HUGETLB;
+			huge_page = true;
+		}
+		if (huge_page) {
+			dune_printf("got mmap(addr=%lx, length=%lx, prot=%lx, flags=%lx, fd=%lx, offset=%lx), hugetlb?%s\n", new_tf.rdi, new_tf.rsi, new_tf.rdx, new_tf.r10, new_tf.r8, new_tf.r9, (new_tf.r10 & MAP_HUGETLB) ? "yes" : "no");
 		}
 		
+		dune_passthrough_g0_syscall(&new_tf);
+		if (huge_page) {
+			dune_printf("mmap(addr=%lx, length=%lx, prot=%lx, flags=%lx, fd=%lx, offset=%lx), hugetlb?%s, return %lx\n", new_tf.rdi, new_tf.rsi, new_tf.rdx, new_tf.r10, new_tf.r8, new_tf.r9, (new_tf.r10 & MAP_HUGETLB) ? "yes" : "no",new_tf.rax);
+		}
+		tf->rax = new_tf.rax;
+		if (new_tf.rax != (unsigned long)MAP_FAILED) {
+			if (len >= GUEST_HUGE_PAGE_THRESHOLD && (prot & PROT_EXEC) == 0) {
+				ret = dune_vm_map_phys(pgroot, new_tf.rax, len,
+					(void *)dune_va_to_pa((void *)new_tf.rax),
+					prot_to_perm(prot) | PERM_BIG);
+				if (ret) {
+					printf("dune: failed to map dune huge page\n");
+				} else {
+					printf("dune: mapped dune huge page\n");
+				}
+			}
+		}
 	} else {
 		dune_passthrough_g0_syscall(tf);
 	}

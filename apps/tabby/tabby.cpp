@@ -2438,7 +2438,7 @@ public:
             while (running_threads != (workers_count))
                ;
             auto& meta = worker_threads_meta[t_i];
-            cerr << "Worker thread " << t_i << " mutex addr " << &meta.mutex << endl;
+
             while (keep_running) {
                std::unique_lock guard(meta.mutex);
                meta.cv.wait(guard, [&]() { return keep_running == false || meta.job_set; });

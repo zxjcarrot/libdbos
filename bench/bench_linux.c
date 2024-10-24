@@ -462,14 +462,14 @@ int main(int argc, char *argv[])
 
 	printf("Benchmarking Linux performance...\n");
 
-    benchmark_uring_io(0);
-    benchmark_uring_io(0);
-    benchmark_uring_io(1);
+    // benchmark_uring_io(0);
+    // benchmark_uring_io(0);
+    // benchmark_uring_io(1);
 
-	benchmark_io(0);
+	// benchmark_io(0);
 
-	benchmark_io(0);
-	benchmark_io(1);
+	// benchmark_io(0);
+	// benchmark_io(1);
 
 
 	benchmark_syscall();
