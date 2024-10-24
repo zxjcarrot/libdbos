@@ -111,7 +111,7 @@ struct vmx_vcpu {
 	u64 posted_vector_interrupts;
 	int shutdown;
 	int ret_code;
-	u64 exit_count[EXIT_REASON_NOTIFY + 1];
+	u64 exit_count[256 + 1];
 	struct msr_autoload {
 		unsigned nr;
 		struct vmx_msr_entry guest[NR_AUTOLOAD_MSRS];

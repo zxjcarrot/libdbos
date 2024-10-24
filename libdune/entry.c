@@ -935,6 +935,7 @@ int dune_init(bool map_full)
 
 	dune_register_syscall_handler(dune_default_syscall_handler);
 	dune_register_g0_syscall_handler(dune_default_g0_syscall_handler);
+	printf("dune: initialization succeeded\n");
 	return 0;
 
 err:

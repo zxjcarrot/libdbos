@@ -673,7 +673,6 @@ static void __vmx_get_cpu_helper(void *ptr)
 
 static void vcpu_update_invalidate_mask(struct vmx_common * vmx_instance) {
 	struct vmx_vcpu *vcpu, *tmp;
-	int i;
 	cpumask_t mask;
 	cpumask_clear(&mask);
 	//spin_lock(&vcpus_lock);
@@ -1413,6 +1412,7 @@ static void vmx_destroy_vcpu(struct vmx_vcpu *vcpu)
 
 void vmx_cleanup(void)
 {
+	printk(KERN_ERR "vmx_cleanup called");
 	struct vmx_vcpu *vcpu, *tmp;
 	int i;
 	spin_lock(&vcpus_lock);
