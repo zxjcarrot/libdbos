@@ -43,6 +43,31 @@ It can be run with the following command:
 $ make -C bench
 # bench/bench_dune
 ```
+
+----
+# Building
+
+## Building hypervisor
+```shell
+cd kern 
+make # build the dune kernel module into dune.ko
+insmod dune.ko # load the hypervisor into Linux.
+```
+
+## Building library os
+```shell
+cd libdune
+make # build the libdbos/libdune as a static library libdune.a
+```
+
+## Configure huge pages
+libdbos relies on huge pages for optimizing guest os performance.
+```shell
+echo 5000 > /proc/sys/vm/nr_hugepages
+```
+## All-in-One Script
+For convinience, you can run `load_dbos.sh` to accomplish all these steps. The script combines all the compilation and module loading. The script also compiles a static library `libdune.a` under libdune directory. Note that `apps/redis` and `apps/tabby` assumes that libdune.a and headers are stored in `../../libdune/`. Note that you need to run the script as root user to compile dune hypervisor to correctly proxy system calls to the host kernel.
+
 ----
 # Programming
 
@@ -50,12 +75,10 @@ $ make -C bench
 2. In a thread, call `dbos_enter()` to enter dune mode.
 3. Override page fault handlers with `dune_register_pgflt_handler`; Override system call handler with `dune_register_syscall_handler`;Override interrupt handler with `dune_register_intr_handler`.
 
-----
-
-
-# Steps
+# Test
+To make sure the hypervisor is working correctly, you can run the hello-world example to verify that.
 ```shell
-cd dune
-make clean; make # rebuild dune module 
-echo 20000 > /proc/sys/vm/nr_hugepages # allocate huge pages for virtualization
-``````
+cd test;
+make
+./hello
+```
