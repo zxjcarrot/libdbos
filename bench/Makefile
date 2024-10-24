@@ -1,7 +1,7 @@
 CC	:= gcc
 CPP	:= g++
-CFLAGS	:= -DNDEBUG -Wall -g -MD -O1 -I../
-CPPFLAGS	:=  -DNDEBUG -Wall -g -MD -O3 -I../
+CFLAGS	:= -DNDEBUG -Wall -g -MD -O1 -I../ -no-pie
+CPPFLAGS	:=  -DNDEBUG -Wall -g -MD -O3 -I../ -no-pie
 LDFLAGS := -ldune -lpthread -luring
 
 bench_files := bench_dune  bench_dune_exception bench_dune_ring bench_linux posted_ipi posted_ipi_send posted_ipi_receive posted_ipi_ping_pong bench_fork_cow bench_tabby_cow bench_ipi

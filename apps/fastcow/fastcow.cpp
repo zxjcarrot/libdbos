@@ -20,7 +20,7 @@
 extern "C"{
 #endif 
 
-#include "dune.h"
+#include "dbos.h"
 #include "fast_spawn.h"
 
 void *asm_memcpy(void *dest, const void *src, size_t n);
@@ -337,12 +337,12 @@ int main(int argc, char *argv[])
 	int cpu_id = sched_getcpu();
 	dune_ipi_set_cpu_id(cpu_id);
 	dune_procmap_dump();
-	ret = dune_init_with_ipi(1);
+	ret = dbos_init(true);
 	if (ret) {
 		printf("failed to initialize dune\n");
 		return ret;
 	}
-	ret = dune_enter();
+	ret = dbos_enter();
 	if (ret) {
 		printf("failed to enter dune\n");
 		return ret;
@@ -360,7 +360,6 @@ int main(int argc, char *argv[])
 	//size_t memory_size = sizeof(data);
     size_t count = memory_size / 4096 * perc;
     num_threads = atoi(argv[3]);
-    bool do_fork = atoi(argv[4]);
 
 	//volatile char *memory = (char*)malloc(memory_size);
 	volatile char *memory = (volatile char *)mmap(NULL, memory_size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, 0, 0);

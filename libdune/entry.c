@@ -775,29 +775,29 @@ static void dune_default_g0_syscall_handler(struct dune_tf *tf)
 	int cpu_id = dune_get_cpu_id();
 	int ret;
 	if (syscall_num == SYS_mmap) {
-		// for length greater than 2MB, make it a huge page
+		// for mapping region larger than 2MB, use huge pages
 		struct dune_tf new_tf = *tf;
 		int flags = (int)tf->r10;
 		int prot = (int)tf->rdx;
 		size_t len = (size_t)tf->rsi;
-		if (len >= 2 * 1024 * 1024 && (prot & PROT_EXEC) == 0) {
-			new_tf.r10 |= MAP_HUGETLB;
-		}
+		// if (len >= 2 * 1024 * 1024 && (prot & PROT_EXEC) == 0) {
+		// 	new_tf.r10 |= MAP_HUGETLB;
+		// }
 		dune_printf("got mmap(addr=%lx, length=%lx, prot=%lx, flags=%lx, fd=%lx, offset=%lx), hugetlb?%s\n", new_tf.rdi, new_tf.rsi, new_tf.rdx, new_tf.r10, new_tf.r8, new_tf.r9, (new_tf.r10 & MAP_HUGETLB) ? "yes" : "no");
 		dune_passthrough_g0_syscall(&new_tf);
 		dune_printf("mmap(addr=%lx, length=%lx, prot=%lx, flags=%lx, fd=%lx, offset=%lx), hugetlb?%s, return %lx\n", new_tf.rdi, new_tf.rsi, new_tf.rdx, new_tf.r10, new_tf.r8, new_tf.r9, (new_tf.r10 & MAP_HUGETLB) ? "yes" : "no",new_tf.rax);
 		tf->rax = new_tf.rax;
 		if (new_tf.rax != (unsigned long)MAP_FAILED) {
-			if (len >= 2 * 1024 * 1024 && (prot & PROT_EXEC) == 0) {
-				ret = dune_vm_map_phys(pgroot, new_tf.rax, len,
-					(void *)dune_va_to_pa((void *)new_tf.rax),
-					prot_to_perm(prot) | PERM_BIG);
-				if (ret) {
-					printf("dune: failed to map dune huge page\n");
-				} else {
-					printf("dune: mapped dune huge page\n");
-				}
-			}
+			// if (len >= 2 * 1024 * 1024 && (prot & PROT_EXEC) == 0) {
+			// 	ret = dune_vm_map_phys(pgroot, new_tf.rax, len,
+			// 		(void *)dune_va_to_pa((void *)new_tf.rax),
+			// 		prot_to_perm(prot) | PERM_BIG);
+			// 	if (ret) {
+			// 		printf("dune: failed to map dune huge page\n");
+			// 	} else {
+			// 		printf("dune: mapped dune huge page\n");
+			// 	}
+			// }
 		}
 		
 	} else {
@@ -953,4 +953,18 @@ int dune_init_with_ipi(bool map_full) {
 	}
 
 	return dune_ipi_init();
+}
+
+
+int dbos_init(bool with_ipi)
+{
+	if (with_ipi) {
+		return dune_init_with_ipi(true);
+	} else {
+		return dune_init(true);
+	}
+}
+
+int dbos_enter() {
+	return dune_enter();
 }

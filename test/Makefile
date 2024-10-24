@@ -1,6 +1,6 @@
 CC	:= gcc
-CFLAGS	:= -Wall -g3 -MD -O0  -fno-pie -I ../ -mincoming-stack-boundary=3
-LDFLAGS := -lpthread -ldune 
+CFLAGS	:= -Wall -g3 -MD -O0  -no-pie -I ../ -mincoming-stack-boundary=3
+LDFLAGS := -lpthread -ldune  -no-pie
 MODULE_LIB := /lib/modules/$(shell uname -r)/build
 
 tests_files := hello test timetest test_sandbox posted_ipi mprotect fork test_ipi # hugepages hugepages_mod.ko

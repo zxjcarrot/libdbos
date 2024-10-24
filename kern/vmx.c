@@ -51,7 +51,11 @@
 #include <linux/percpu.h>
 #include <linux/syscalls.h>
 #include <linux/version.h>
+#include <linux/errno.h>
+#include <linux/types.h>
+#include <linux/syscalls.h>
 #include <trace/events/ipi.h>
+#include <linux/unistd.h>
 
 #include <asm/desc.h>
 #include <asm/vmx.h>
@@ -59,6 +63,7 @@
 //#include <asm/virtext.h>
 #include <asm/cpufeature.h>
 #include <asm/cpufeatures.h>
+#include <asm/tlbflush.h>
 #include <asm/traps.h>
 #include "dune.h"
 #include "vmx.h"
@@ -2318,8 +2323,10 @@ __init int vmx_init(void)
 	// 	return -EIO;
 	// }
 
+	printk(KERN_INFO "vmx: before vmx_init_syscall\n");
 	vmx_init_syscall();
 
+	printk(KERN_INFO "vmx: vmx_init_syscall\n");
 	if (setup_vmcs_config(&vmcs_config) < 0)
 		return -EIO;
 

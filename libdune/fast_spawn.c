@@ -910,6 +910,9 @@ void dbos_fast_spawn_pgflt_handler(uintptr_t addr, uint64_t fec, struct dune_tf 
 	if (cpu_id == SNAPSHOT_CORE) {
 		snapshot = true;
 		if (snapshot_pgtable_exists) {
+			if (pgroot_snapshot != pgtbl_root) {
+				dune_printf("pgroot_snapshot %px, pgtbl_root %px\n", pgroot_snapshot, pgtbl_root);
+			}
 			assert(pgroot_snapshot == pgtbl_root);
 		}
 		//pgtbl_root = state->pgroot_snapshot;
