@@ -5,7 +5,7 @@
 This repo contains recipes of a new paradigm for DB-OS co-design leveraging privileged kernel bypass.  The DB-OS co-design with privileged kernel bypass aims at providing the DBMS with more power to design new abstractions that are impossible to do in user space.  Privileged Kernel Bypass differs from normal kernel bypass in that it can additionally bypass security-sensitive subsystems (virtual memory, scheduler, interrupt.) of Linux kernel. This is achieved with the help of the dune hypervisor for providing privileged process abstraction.
 
 The directory layout of this repo is as follows:
-* apps/tabby -> the DB-OS co-design buffer manager accelerated by virtual memory hardware without TLB shootdown.
+* apps/tabby -> the DB-OS co-design buffer manager accelerated by virtual memory hardware without TLB shootdown. See [tabby README](apps/tabby/README.md) for more information.
 * apps/redis -> the modified Redis that can take memory snapshots for persistence instantaneously.
 * kern/    -> the Dune kernel module of the hypervisor implementation
 * libdune/ -> the libdbos library OS adapted from libdune, containing additional enhancements to memory management and interrupts. 
@@ -33,7 +33,7 @@ test/hello
 ```
 
 You'll need to be root to compile and load the module. However, applications can use
-Dune without running as root; simply change the permission of '/dev/dune'
+Dune without running as root; simply change the permission of `/dev/dune`
 accordingly.
 
 Another program worth trying after Dune is setup is the Dune benchmark suite.
