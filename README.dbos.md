@@ -19,7 +19,7 @@ The directory layout of this repo is as follows:
 * A recent kernel version --- We use 6.2 and later, but earlier versions
   may also work.
 * Kernel headers must be installed for the running kernel.
-* Currently, the hypervisor does not support x2apic and kaslr. You need to add `nox2apic` and `nokaslr` to the kernel boot arguments to disable them. See [dune limitations](README.dune.md#limitations) for more.
+* Currently, the hypervisor does not support x2apic. You need to add `nox2apic` to the kernel boot arguments to disable x2apic. See [dune limitations](README.dune.md#limitations) for more.
 * We provide a script called `dune_req.sh` that will attempt to verify
 if these requirements are met.
 
