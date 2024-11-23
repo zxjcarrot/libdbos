@@ -1,6 +1,6 @@
 # Tabby
 
-Code for DB-OS co-designed buffer manager described in "Practical DB-OS Co-Design with Privileged DB Process".
+Code for DB-OS co-designed buffer manager described in "Practical DB-OS Co-Design with Privileged Kernel Bypass" [paper](https://github.com/zxjcarrot/libdbos/blob/main/libdbos-preprint.pdf).
 The code is based on [vmcache](https://github.com/viktorleis/vmcache).
 
 ## Environment Variables
