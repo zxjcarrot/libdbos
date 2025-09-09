@@ -9,38 +9,30 @@ pushd $wd
 echo "now at $wd, $tabby_compile_script"
 
 concat_two_csvs() {
-    # 定义文件名
     file1="$1"
     file2="$2"
 
-    # 计算每个文件的行数（排除表头）
     lines1=$(($(wc -l < "$file1")-1))
     lines2=$(($(wc -l < "$file2")-1))
 
-    # 确定较短文件的行数（不包括表头）
     if [ "$lines1" -lt "$lines2" ]; then
         k="$lines1"
     else
         k="$lines2"
     fi
 
-    # 提取表头
     head -n 1 "$file1" > "header_file1.csv"
     head -n 1 "$file2" > "header_file2.csv"
 
-    # 合并表头，假设两个文件的表头都需要保留
     paste -d, "header_file1.csv" "header_file2.csv" > $3
 
-    # 从每个文件中提取最后k行（加上k+1来包括表头）
     tail -n $((k+1)) "$file1" > "temp_file1.csv"
     tail -n $((k+1)) "$file2" > "temp_file2.csv"
 
-    # 合并这两部分，跳过一个表头的行
     tail -n +2 "temp_file1.csv" > "temp_file1_no_header.csv"
     tail -n +2 "temp_file2.csv" > "temp_file2_no_header.csv"
     paste -d, "temp_file1_no_header.csv" "temp_file2_no_header.csv" >> $3
 
-    # 清理临时文件
     rm "header_file1.csv" "header_file2.csv" "temp_file1.csv" "temp_file2.csv" "temp_file1_no_header.csv" "temp_file2_no_header.csv" $1 $2
 }
 

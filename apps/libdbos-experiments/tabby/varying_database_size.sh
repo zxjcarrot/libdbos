@@ -9,38 +9,30 @@ pushd $wd
 echo "now at $wd, $tabby_compile_script"
 
 concat_two_csvs() {
-    # 定义文件名
     file1="$1"
     file2="$2"
 
-    # 计算每个文件的行数（排除表头）
     lines1=$(($(wc -l < "$file1")-1))
     lines2=$(($(wc -l < "$file2")-1))
 
-    # 确定较短文件的行数（不包括表头）
     if [ "$lines1" -lt "$lines2" ]; then
         k="$lines1"
     else
         k="$lines2"
     fi
 
-    # 提取表头
     head -n 1 "$file1" > "header_file1.csv"
     head -n 1 "$file2" > "header_file2.csv"
 
-    # 合并表头，假设两个文件的表头都需要保留
     paste -d, "header_file1.csv" "header_file2.csv" > $3
 
-    # 从每个文件中提取最后k行（加上k+1来包括表头）
     tail -n $((k+1)) "$file1" > "temp_file1.csv"
     tail -n $((k+1)) "$file2" > "temp_file2.csv"
 
-    # 合并这两部分，跳过一个表头的行
     tail -n +2 "temp_file1.csv" > "temp_file1_no_header.csv"
     tail -n +2 "temp_file2.csv" > "temp_file2_no_header.csv"
     paste -d, "temp_file1_no_header.csv" "temp_file2_no_header.csv" >> $3
 
-    # 清理临时文件
     rm "header_file1.csv" "header_file2.csv" "temp_file1.csv" "temp_file2.csv" "temp_file1_no_header.csv" "temp_file2_no_header.csv" $1 $2
 }
 
@@ -73,6 +65,7 @@ generateIOStat() {
 
 nvmedev="nvme3n1p3"
 
+#database_sizes=(8388608 33554432 67108864)
 #database_sizes=(8388608 33554432 67108864)
 database_sizes=(8388608 536870912)
 readRatio=(100 50)
@@ -152,11 +145,11 @@ for zipff in "${zipfFactor[@]}"; do
             rm -rf ./leanstore
             mkdir leanstore
 
-            # ./../../../../leanstore/build/frontend/wiredtiger_ycsb --mv=false --isolation_level=si --wal=false --pp_threads=4 -ycsb_read_ratio $ratio -ycsb_payload_size 120 -run_for_seconds $runForSeconds -zipf_factor $zipff -ycsb_tuple_count $size -dram_gib 8 -worker_threads $threads &> $execution_log
-            # cat $execution_log | grep '^[(ts)|0-9].*,' > $result_file_name
+            ./../../../../leanstore/build/frontend/wiredtiger_ycsb --mv=false --isolation_level=si --wal=false --pp_threads=4 -ycsb_read_ratio $ratio -ycsb_payload_size 120 -run_for_seconds $runForSeconds -zipf_factor $zipff -ycsb_tuple_count $size -dram_gib 8 -worker_threads $threads &> $execution_log
+            cat $execution_log | grep '^[(ts)|0-9].*,' > $result_file_name
 
             kill $IOSTAT_PID
-            #  concat_two_csvs $result_iostat_name $result_file_name $result_name
+             concat_two_csvs $result_iostat_name $result_file_name $result_name
 
             # leanstore
 
@@ -165,17 +158,17 @@ for zipff in "${zipfFactor[@]}"; do
             result_iostat_name="${result_prefix}_dbsize_${dbsize_gb}_${ratio}_${zipff}_iostat.csv"
             result_name="${result_prefix}_dbsize_${dbsize_gb}_${ratio}_${zipff}.csv"
             execution_log="$result_file_name.log"
-            #rm -rf ./leanstore
-            #touch leanstore
+            rm -rf ./leanstore
+            touch leanstore
             # one extra thread for leanstore for stats
             # generateIOStat $nvmedev
-            # IOSTAT_PID=$!
-            # pp_threads=8
-            # ./../../../../leanstore/build/frontend/ycsb --bulk_insert=true --ssd_path=$blockPath --vi=false --mv=false  --isolation_level=ru --wal=false --pp_threads=$pp_threads -ycsb_read_ratio $ratio -ycsb_payload_size 120 -run_for_seconds $runForSeconds -zipf_factor $zipff -ycsb_tuple_count $size -dram_gib 8 -worker_threads `expr $threads - $pp_threads + 1` -ycsb_sleepy_thread 1 &> $execution_log
-            # #./../../../../leanstore/build/frontend/ycsb  --vi=false --mv=false --isolation_level=ru --wal=false --pp-threads=4 -ycsb_read_ratio 100 -ycsb_payload_size 120 -run_for_seconds 180 -zipf_factor 0.9 -ycsb_tuple_count 134217728 -dram_gib 8  --xmerge -worker_threads 61 --pin_threads -ycsb_sleepy_thread 1 
+            IOSTAT_PID=$!
+            pp_threads=8
+            ./../../../../leanstore/build/frontend/ycsb --bulk_insert=true --ssd_path=$blockPath --vi=false --mv=false  --isolation_level=ru --wal=false --pp_threads=$pp_threads -ycsb_read_ratio $ratio -ycsb_payload_size 120 -run_for_seconds $runForSeconds -zipf_factor $zipff -ycsb_tuple_count $size -dram_gib 8 -worker_threads `expr $threads - $pp_threads + 1` -ycsb_sleepy_thread 1 &> $execution_log
+            #./../../../../leanstore/build/frontend/ycsb  --vi=false --mv=false --isolation_level=ru --wal=false --pp-threads=4 -ycsb_read_ratio 100 -ycsb_payload_size 120 -run_for_seconds 180 -zipf_factor 0.9 -ycsb_tuple_count 134217728 -dram_gib 8  --xmerge -worker_threads 61 --pin_threads -ycsb_sleepy_thread 1 
             # cat $execution_log | grep '^[(ts)|0-9].*,' > $result_file_name
             # kill $IOSTAT_PID
-            # concat_two_csvs $result_iostat_name $result_file_name $result_name
+            concat_two_csvs $result_iostat_name $result_file_name $result_name
         done
     done
 done
